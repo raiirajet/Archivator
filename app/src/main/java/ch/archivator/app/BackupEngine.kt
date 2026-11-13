@@ -89,9 +89,25 @@ object BackupEngine {
                 val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
                     init(Cipher.DECRYPT_MODE, key(password, salt), GCMParameterSpec(128, iv))
                 }
+                // Decrypt the ENTIRE encrypted stream before accepting any ZIP data.
+                // CipherInputStream must reach EOF to verify AES-GCM authentication.
+                val verifiedZip = File(staging, "verified.zip")
+                CipherInputStream(raw, cipher).use { plain ->
+                    verifiedZip.outputStream().use { output ->
+                        val buf = ByteArray(16_384)
+                        var bytes = 0L
+                        while (true) {
+                            val n = plain.read(buf)
+                            if (n < 0) break
+                            bytes += n
+                            require(bytes <= maxArchive) { "Backup zu gross" }
+                            output.write(buf, 0, n)
+                        }
+                    }
+                }
                 var total = 0L
                 var foundJson: String? = null
-                ZipInputStream(CipherInputStream(raw, cipher)).use { zip ->
+                ZipInputStream(verifiedZip.inputStream()).use { zip ->
                     while (true) {
                         val entry = zip.nextEntry ?: break
                         val n = entry.name
@@ -119,7 +135,7 @@ object BackupEngine {
                         require(total <= maxArchive) { "Backup zu gross" }
                         zip.closeEntry()
                     }
-                    // Reading to end verifies the AES-GCM authentication tag.
+                    // Payload was authenticated before ZIP parsing.
                 }
                 json = foundJson ?: error("Im Backup fehlen die Dokumentdaten")
             }
