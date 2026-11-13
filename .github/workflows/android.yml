@@ -5,11 +5,20 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: archivator-build-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   build:
+    env:
+      ARCHIVATOR_KEYSTORE_B64: ${{ secrets.ARCHIVATOR_KEYSTORE_B64 }}
+      ARCHIVATOR_STORE_PASSWORD: ${{ secrets.ARCHIVATOR_STORE_PASSWORD }}
+      ARCHIVATOR_KEY_ALIAS: ${{ secrets.ARCHIVATOR_KEY_ALIAS }}
+      ARCHIVATOR_KEY_PASSWORD: ${{ secrets.ARCHIVATOR_KEY_PASSWORD }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -27,11 +36,27 @@ jobs:
         with:
           gradle-version: '8.10.2'
       - name: Build installable debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug
       - uses: actions/upload-artifact@v4
         if: success()
         with:
           name: Archivator-Android-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Decode stable release keystore
+        if: env.ARCHIVATOR_KEYSTORE_B64 != ''
+        run: echo "$ARCHIVATOR_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/archivator-release.jks"
+      - name: Build signed stable release APK
+        if: env.ARCHIVATOR_KEYSTORE_B64 != ''
+        env:
+          ARCHIVATOR_KEYSTORE_PATH: ${{ runner.temp }}/archivator-release.jks
+        run: gradle --no-daemon :app:assembleRelease
+      - uses: actions/upload-artifact@v4
+        if: env.ARCHIVATOR_KEYSTORE_B64 != ''
+        with:
+          name: Archivator-SIGNED-RELEASE-APK
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
