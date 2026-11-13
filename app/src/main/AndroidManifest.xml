@@ -7,6 +7,8 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:label="Archivator"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Archivator"
         android:supportsRtl="true">
         <activity
