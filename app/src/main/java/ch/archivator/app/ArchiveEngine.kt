@@ -26,7 +26,8 @@ object ArchiveEngine {
             val mime = suppliedMime ?: ctx.contentResolver.getType(uri) ?: "application/pdf"
             val isPdf = mime.contains("pdf") || uri.toString().lowercase(Locale.ROOT).substringBefore("?").endsWith(".pdf")
             val ext = if (isPdf) "pdf" else "jpg"
-            val f = File(docsDir(ctx), "${UUID.randomUUID()}.$ext")
+            val f = File(ctx.cacheDir, "${UUID.randomUUID()}.$ext")
+            var encrypted: File? = null
             try {
                 ctx.contentResolver.openInputStream(uri)?.use { input ->
                     f.outputStream().use { input.copyTo(it) }
@@ -41,22 +42,31 @@ object ArchiveEngine {
                 }
                 val text = try { recognize(ctx, f, isPdf) } catch (_: Exception) { "" }
                 val guess = guessFromText(text)
+                val swiss = try { SwissQr.detect(ctx, f, isPdf) } catch (_: Exception) { null }
+                encrypted = Vault.storeEncrypted(ctx, f)
                 val d = ArchiveDoc(
-                    title = guess.title,
-                    category = guess.category,
-                    merchant = guess.merchant,
-                    amount = guess.amount,
+                    title = if (swiss != null) "QR-Rechnung · " + swiss.creditor else guess.title,
+                    category = if (swiss != null) "Rechnung" else guess.category,
+                    merchant = swiss?.creditor?.ifBlank { guess.merchant } ?: guess.merchant,
+                    amount = swiss?.amount?.ifBlank { guess.amount } ?: guess.amount,
                     due = guess.due,
                     ocr = text,
-                    file = f.name,
+                    file = encrypted.name,
                     mime = if (isPdf) "application/pdf" else "image/jpeg",
-                    sha256 = hash
+                    sha256 = hash,
+                    iban = swiss?.iban ?: "",
+                    reference = swiss?.reference ?: "",
+                    qrPayload = swiss?.payload ?: "",
+                    invoiceNumber = guessInvoiceNumber(text),
+                    purchased = guessPurchaseDate(text)
                 )
                 db.put(d)
                 Pair(d, null)
             } catch (ex: Exception) {
-                f.delete()
+                encrypted?.delete()
                 Pair(null, ex.localizedMessage ?: "Import fehlgeschlagen")
+            } finally {
+                f.delete()
             }
         }
 
@@ -133,4 +143,17 @@ fun guessFromText(text: String): TextGuess {
         else -> "${category} · ${merchant.take(48)}"
     }
     return TextGuess(title, category, merchant, amount, due)
+}
+
+fun guessInvoiceNumber(text: String): String =
+    Regex("""(?i)(?:rechnungs(?:nummer|nr\\.?|nr)|invoice\\s*(?:no\\.?|number)|beleg\\s*nr\\.?)\\s*[:#-]?\\s*([A-Z0-9\\-/.]{3,35})""")
+        .find(text)?.groupValues?.getOrNull(1) ?: ""
+
+fun guessPurchaseDate(text: String): String {
+    val candidate = Regex("""(?i)(?:kaufdatum|belegdatum|datum|date)\\s*[:#-]?\\s*(\\d{1,2})[./](\\d{1,2})[./](\\d{4})""")
+        .find(text) ?: return ""
+    return runCatching {
+        LocalDate.of(candidate.groupValues[3].toInt(), candidate.groupValues[2].toInt(),
+            candidate.groupValues[1].toInt()).toString()
+    }.getOrDefault("")
 }
