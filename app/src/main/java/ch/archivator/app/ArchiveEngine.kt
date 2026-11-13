@@ -21,7 +21,7 @@ import java.util.UUID
 object ArchiveEngine {
     fun docsDir(ctx: Context): File = File(ctx.filesDir, "docs").apply { mkdirs() }
 
-    suspend fun import(ctx: Context, db: ArchiveDb, uri: Uri, suppliedMime: String? = null): Pair<ArchiveDoc?, String?> =
+    suspend fun importDocument(ctx: Context, db: ArchiveDb, uri: Uri, suppliedMime: String? = null): Pair<ArchiveDoc?, String?> =
         withContext(Dispatchers.IO) {
             val mime = suppliedMime ?: ctx.contentResolver.getType(uri) ?: "application/pdf"
             val isPdf = mime.contains("pdf") || uri.toString().lowercase(Locale.ROOT).substringBefore("?").endsWith(".pdf")
