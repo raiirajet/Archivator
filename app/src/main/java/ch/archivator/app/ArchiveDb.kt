@@ -24,14 +24,21 @@ data class ArchiveDoc(
     val file: String = "",
     val mime: String = "application/pdf",
     val sha256: String = "",
-    val created: Long = System.currentTimeMillis()
+    val created: Long = System.currentTimeMillis(),
+    val iban: String = "",
+    val reference: String = "",
+    val invoiceNumber: String = "",
+    val recurringMonths: Int = 0,
+    val reimbursed: String = "",
+    val deductible: String = "",
+    val qrPayload: String = ""
 )
 
 val categories = listOf("Alle", "Rechnung", "Quittung", "Garantie", "Krankenkasse", "Vertrag", "Steuern", "Sonstiges")
 val states = listOf("Offen", "Bezahlt", "Eingereicht", "In Bearbeitung", "Teilweise erstattet", "Erledigt")
 val categoryIcons = mapOf("Rechnung" to "🧾", "Quittung" to "🛍", "Garantie" to "🛡", "Krankenkasse" to "♡", "Vertrag" to "✍", "Steuern" to "📁", "Sonstiges" to "📄")
 
-class ArchiveDb(context: Context) : SQLiteOpenHelper(context, "archivator.db", null, 1) {
+class ArchiveDb(context: Context) : SQLiteOpenHelper(context, "archivator.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""
             CREATE TABLE docs(
@@ -40,7 +47,11 @@ class ArchiveDb(context: Context) : SQLiteOpenHelper(context, "archivator.db", n
                 merchant TEXT NOT NULL, amount TEXT NOT NULL, due TEXT NOT NULL,
                 purchased TEXT NOT NULL, warrantyMonths INTEGER NOT NULL,
                 status TEXT NOT NULL, note TEXT NOT NULL, file TEXT NOT NULL,
-                mime TEXT NOT NULL, sha256 TEXT NOT NULL, created INTEGER NOT NULL
+                mime TEXT NOT NULL, sha256 TEXT NOT NULL, created INTEGER NOT NULL,
+                iban TEXT NOT NULL DEFAULT '', reference TEXT NOT NULL DEFAULT '',
+                invoiceNumber TEXT NOT NULL DEFAULT '', recurringMonths INTEGER NOT NULL DEFAULT 0,
+                reimbursed TEXT NOT NULL DEFAULT '', deductible TEXT NOT NULL DEFAULT '',
+                qrPayload TEXT NOT NULL DEFAULT ''
             )
         """.trimIndent())
         db.execSQL("CREATE INDEX idx_docs_due ON docs(due)")
@@ -49,7 +60,17 @@ class ArchiveDb(context: Context) : SQLiteOpenHelper(context, "archivator.db", n
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Future migrations must preserve private documents.
+        if (oldVersion < 2) {
+            listOf(
+                "iban TEXT NOT NULL DEFAULT ''",
+                "reference TEXT NOT NULL DEFAULT ''",
+                "invoiceNumber TEXT NOT NULL DEFAULT ''",
+                "recurringMonths INTEGER NOT NULL DEFAULT 0",
+                "reimbursed TEXT NOT NULL DEFAULT ''",
+                "deductible TEXT NOT NULL DEFAULT ''",
+                "qrPayload TEXT NOT NULL DEFAULT ''"
+            ).forEach { db.execSQL("ALTER TABLE docs ADD COLUMN $it") }
+        }
     }
 
     fun put(d: ArchiveDoc) {
@@ -60,6 +81,9 @@ class ArchiveDb(context: Context) : SQLiteOpenHelper(context, "archivator.db", n
             put("purchased", d.purchased); put("warrantyMonths", d.warrantyMonths)
             put("status", d.status); put("note", d.note); put("file", d.file)
             put("mime", d.mime); put("sha256", d.sha256); put("created", d.created)
+            put("iban", d.iban); put("reference", d.reference)
+            put("invoiceNumber", d.invoiceNumber); put("recurringMonths", d.recurringMonths)
+            put("reimbursed", d.reimbursed); put("deductible", d.deductible); put("qrPayload", d.qrPayload)
         }
         writableDatabase.insertWithOnConflict("docs", null, v, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -103,6 +127,13 @@ class ArchiveDb(context: Context) : SQLiteOpenHelper(context, "archivator.db", n
         file = getString(getColumnIndexOrThrow("file")),
         mime = getString(getColumnIndexOrThrow("mime")),
         sha256 = getString(getColumnIndexOrThrow("sha256")),
-        created = getLong(getColumnIndexOrThrow("created"))
+        created = getLong(getColumnIndexOrThrow("created")),
+        iban = getString(getColumnIndexOrThrow("iban")),
+        reference = getString(getColumnIndexOrThrow("reference")),
+        invoiceNumber = getString(getColumnIndexOrThrow("invoiceNumber")),
+        recurringMonths = getInt(getColumnIndexOrThrow("recurringMonths")),
+        reimbursed = getString(getColumnIndexOrThrow("reimbursed")),
+        deductible = getString(getColumnIndexOrThrow("deductible")),
+        qrPayload = getString(getColumnIndexOrThrow("qrPayload"))
     )
 }
