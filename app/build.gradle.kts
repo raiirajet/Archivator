@@ -4,7 +4,21 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val signingPath = System.getenv("ARCHIVATOR_KEYSTORE_PATH")
+val signingReady = !signingPath.isNullOrBlank() &&
+    !System.getenv("ARCHIVATOR_STORE_PASSWORD").isNullOrBlank() &&
+    !System.getenv("ARCHIVATOR_KEY_ALIAS").isNullOrBlank() &&
+    !System.getenv("ARCHIVATOR_KEY_PASSWORD").isNullOrBlank()
+
 android {
+    signingConfigs {
+        if (signingReady) create("stableRelease") {
+            storeFile = file(signingPath!!)
+            storePassword = System.getenv("ARCHIVATOR_STORE_PASSWORD")
+            keyAlias = System.getenv("ARCHIVATOR_KEY_ALIAS")
+            keyPassword = System.getenv("ARCHIVATOR_KEY_PASSWORD")
+        }
+    }
     namespace = "ch.archivator.app"
     compileSdk = 35
 
@@ -20,6 +34,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (signingReady) signingConfig = signingConfigs.getByName("stableRelease")
         }
     }
 
