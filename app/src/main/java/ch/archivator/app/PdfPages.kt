@@ -10,6 +10,12 @@ import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.net.Uri
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.ui.graphics.graphicsLayer
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -75,44 +81,96 @@ object PdfPages {
         } finally { if (Vault.isEncrypted(doc)) f.delete() }
     }
 
-    /**
-     * Reorders/rotates pages and stores an encrypted replacement.
-     * Android PdfDocument rasterizes these pages (existing PDF text/vector layers
-     * become images); a backup is recommended before changing an important PDF.
-     */
+    /** Reorder, rotate or delete PDF pages without rasterizing text or vectors. */
     fun rewrite(ctx: Context, db: ArchiveDb, doc: ArchiveDoc, order: List<PdfPageOrder>) {
-        require(doc.mime.contains("pdf")) { "Nur PDFs können sortiert werden" }
-        require(order.isNotEmpty()) { "Mindestens eine Seite muss erhalten bleiben" }
+        require(doc.mime.contains("pdf")) { "Nur PDF-Dokumente unterstützt" }
+        require(order.isNotEmpty()) { "Mindestens eine Seite erforderlich" }
+        PDFBoxResourceLoader.init(ctx.applicationContext)
+        val plain = Vault.plaintext(ctx, doc)
         val output = File(ctx.cacheDir, "edited-${System.nanoTime()}.pdf")
         try {
-            val pdf = PdfDocument()
-            try {
-                for ((position, source) in order.withIndex()) {
-                    val bitmap = pageBitmap(ctx, doc, source.originalIndex, source.rotation)
-                    try {
-                        val width = bitmap.width
-                        val height = bitmap.height
-                        val info = PdfDocument.PageInfo.Builder(width, height, position + 1).create()
-                        val page = pdf.startPage(info)
-                        page.canvas.drawColor(AndroidColor.WHITE)
-                        page.canvas.drawBitmap(bitmap, null, RectF(0f, 0f, width.toFloat(), height.toFloat()), null)
-                        pdf.finishPage(page)
-                    } finally { bitmap.recycle() }
+            PDDocument.load(plain).use { original ->
+                require(order.size <= 300) { "Zu viele Seiten" }
+                PDDocument().use { target ->
+                    for (item in order) {
+                        require(item.originalIndex in 0 until original.numberOfPages) { "Ungültiger Seitenindex" }
+                        val page = target.importPage(original.getPage(item.originalIndex))
+                        page.rotation = (page.rotation + item.rotation) % 360
+                    }
+                    target.save(output)
                 }
-                output.outputStream().use { pdf.writeTo(it) }
-            } finally { pdf.close() }
+            }
             Vault.replace(ctx, db, doc, output)
-        } finally { output.delete() }
+        } finally {
+            output.delete()
+            if (Vault.isEncrypted(doc)) plain.delete()
+        }
+    }
+
+    fun merge(ctx: Context, db: ArchiveDb, primary: ArchiveDoc, other: ArchiveDoc) {
+        require(primary.mime.contains("pdf") && other.mime.contains("pdf"))
+        require(primary.id != other.id)
+        PDFBoxResourceLoader.init(ctx.applicationContext)
+        val first = Vault.plaintext(ctx, primary)
+        val second = Vault.plaintext(ctx, other)
+        val output = File(ctx.cacheDir, "merged-${System.nanoTime()}.pdf")
+        try {
+            PDDocument.load(first).use { result ->
+                PDDocument.load(second).use { imported ->
+                    require(result.numberOfPages + imported.numberOfPages <= 300)
+                    for (i in 0 until imported.numberOfPages) result.importPage(imported.getPage(i))
+                }
+                result.save(output)
+            }
+            Vault.replace(ctx, db, primary, output)
+        } finally {
+            output.delete()
+            if (Vault.isEncrypted(primary)) first.delete()
+            if (Vault.isEncrypted(other)) second.delete()
+        }
+    }
+
+    fun extract(ctx: Context, doc: ArchiveDoc, index: Int, destination: Uri) {
+        require(doc.mime.contains("pdf"))
+        PDFBoxResourceLoader.init(ctx.applicationContext)
+        val plain = Vault.plaintext(ctx, doc)
+        val output = File(ctx.cacheDir, "extracted-${System.nanoTime()}.pdf")
+        try {
+            PDDocument.load(plain).use { original ->
+                require(index in 0 until original.numberOfPages)
+                PDDocument().use { target ->
+                    target.importPage(original.getPage(index))
+                    target.save(output)
+                }
+            }
+            ctx.contentResolver.openOutputStream(destination, "w")?.use { out ->
+                output.inputStream().use { it.copyTo(out) }
+            } ?: error("Ziel konnte nicht geöffnet werden")
+        } finally {
+            output.delete()
+            if (Vault.isEncrypted(doc)) plain.delete()
+        }
     }
 }
 
 @Composable
-fun PdfPreviewScreen(ctx: Context, doc: ArchiveDoc, onBack: () -> Unit, onUpdated: () -> Unit) {
+fun PdfPreviewScreen(ctx: Context, doc: ArchiveDoc, allDocs: List<ArchiveDoc>,
+                     onBack: () -> Unit, onUpdated: () -> Unit,
+                     onExtract: (Int) -> Unit) {
     var order by remember(doc.id) { mutableStateOf(listOf(PdfPageOrder(0))) }
     var selected by remember(doc.id) { mutableIntStateOf(0) }
     var busy by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    var showMerge by remember { mutableStateOf(false) }
+    var scale by remember(doc.id, selected) { mutableFloatStateOf(1f) }
+    var panX by remember(doc.id, selected) { mutableFloatStateOf(0f) }
+    var panY by remember(doc.id, selected) { mutableFloatStateOf(0f) }
+    val zoomState = rememberTransformableState { zoom, pan, _ ->
+        scale = (scale * zoom).coerceIn(1f, 4f)
+        panX += pan.x
+        panY += pan.y
+    }
     LaunchedEffect(doc.id) {
         val result = withContext(Dispatchers.IO) { runCatching { PdfPages.pageCount(ctx, doc) } }
         result.onSuccess { count ->
@@ -164,7 +222,10 @@ fun PdfPreviewScreen(ctx: Context, doc: ArchiveDoc, onBack: () -> Unit, onUpdate
                     Card(Modifier.fillMaxWidth().weight(1f),
                         shape = RoundedCornerShape(16.dp)) {
                         Image(image!!.asImageBitmap(), "Seite ${selected + 1}",
-                            Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
+                            Modifier.fillMaxSize().padding(8.dp).transformable(zoomState)
+                                .graphicsLayer(scaleX = scale, scaleY = scale,
+                                    translationX = panX, translationY = panY),
+                            contentScale = ContentScale.Fit)
                     }
                 } else Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -186,12 +247,45 @@ fun PdfPreviewScreen(ctx: Context, doc: ArchiveDoc, onBack: () -> Unit, onUpdate
                     IconButton(enabled = doc.mime.contains("pdf") && selected < order.lastIndex, onClick = {
                         order = order.toMutableList().also { it.add(selected + 1, it.removeAt(selected)) }; selected++
                     }) { Icon(Icons.Outlined.ArrowDownward, "Seite nach hinten") }
+                    IconButton(enabled = doc.mime.contains("pdf") && order.size > 1, onClick = {
+                        order = order.toMutableList().also { it.removeAt(selected) }
+                        selected = selected.coerceAtMost(order.lastIndex)
+                    }) { Icon(Icons.Outlined.DeleteOutline, "Seite entfernen") }
                 }
                 if (doc.mime.contains("pdf")) {
-                    Text("PDF-Seiten können gedreht und umsortiert werden. Beim Speichern wird das PDF neu gerendert; durchsuchbarer PDF-Text kann dabei verloren gehen.",
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(onClick = { onExtract(item.originalIndex) }) { Text("Seite exportieren") }
+                        if (allDocs.any { it.id != doc.id && it.mime.contains("pdf") }) {
+                            OutlinedButton(onClick = { showMerge = true }) { Text("PDF zusammenführen") }
+                        }
+                    }
+                    Text("Text und Vektorgrafiken werden beim Sortieren, Drehen und Zusammenführen erhalten. Digitale Signaturen können dabei ungültig werden.",
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
     }
+    if (showMerge) AlertDialog(
+        onDismissRequest = { showMerge = false },
+        title = { Text("Mit welchem PDF zusammenführen?") },
+        text = {
+            Column {
+                allDocs.filter { it.id != doc.id && it.mime.contains("pdf") }.take(25).forEach { candidate ->
+                    TextButton(onClick = {
+                        showMerge = false
+                        busy = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching { ArchiveDb(ctx).use { PdfPages.merge(ctx, it, doc, candidate) } }
+                            }
+                            result.onSuccess { onUpdated() }
+                                .onFailure { error = "PDF konnte nicht zusammengeführt werden: ${it.message}" }
+                            busy = false
+                        }
+                    }) { Text(candidate.title) }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showMerge = false }) { Text("Schliessen") } }
+    )
 }

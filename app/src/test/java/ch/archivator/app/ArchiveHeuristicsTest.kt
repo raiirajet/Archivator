@@ -21,6 +21,24 @@ class ArchiveHeuristicsTest {
         assertEquals("R-1123", guessInvoiceNumber("Rechnungsnummer: R-1123"))
     }
 
+    @Test fun similarReceiptFlagsAnotherImageOfSamePurchase() {
+        val first = ArchiveDoc(
+            category = "Quittung", merchant = "Migros", amount = "39.90",
+            purchased = "2026-11-13", invoiceNumber = "M-7843",
+            ocr = "Migros Produkt A Produkt B Kasse Total 39.90"
+        )
+        val duplicate = similarDocument(listOf(first), "Migros", "39.90",
+            "2026-11-13", "M-7843", "Migros Kasse Total")
+        assertEquals(first.id, duplicate?.id)
+    }
+
+    @Test fun unrelatedInvoiceIsNotDuplicate() {
+        val existing = ArchiveDoc(merchant = "Migros", amount = "12.90",
+            purchased = "2026-11-10", invoiceNumber = "ABC3344")
+        assertNull(similarDocument(listOf(existing), "Coop", "15.00",
+            "2026-11-11", "XYZ1234", "anderer Händler"))
+    }
+
     @Test fun swissQrValidatesIbanAndStructure() {
         val fields = MutableList(33) { "" }
         fields[0] = "SPC"; fields[1] = "0200"; fields[2] = "1"

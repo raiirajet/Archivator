@@ -48,10 +48,15 @@ object ArchiveEngine {
                 val text = try { recognize(ctx, f, isPdf) } catch (_: Exception) { "" }
                 val guess = guessFromText(text)
                 val swiss = try { SwissQr.detect(ctx, f, isPdf) } catch (_: Exception) { null }
+                val predictedCategory = if (swiss != null) "Rechnung"
+                    else CategoryMemory.prediction(ctx, guess.merchant) ?: guess.category
+                val matching = similarDocument(db.all(), guess.merchant,
+                    swiss?.amount?.ifBlank { guess.amount } ?: guess.amount,
+                    guessPurchaseDate(text), guessInvoiceNumber(text), text)
                 encrypted = Vault.storeEncrypted(ctx, f)
                 val d = ArchiveDoc(
                     title = if (swiss != null) "QR-Rechnung · " + swiss.creditor else guess.title,
-                    category = if (swiss != null) "Rechnung" else guess.category,
+                    category = predictedCategory,
                     merchant = swiss?.creditor?.ifBlank { guess.merchant } ?: guess.merchant,
                     amount = swiss?.amount?.ifBlank { guess.amount } ?: guess.amount,
                     due = guess.due,
@@ -68,7 +73,7 @@ object ArchiveEngine {
                     purchased = guessPurchaseDate(text)
                 )
                 db.put(d)
-                Pair(d, null)
+                Pair(d, matching?.let { "Möglicher Doppelbeleg zu: ${it.title}. Bitte prüfen." })
             } catch (ex: Exception) {
                 encrypted?.delete()
                 Pair(null, ex.localizedMessage ?: "Import fehlgeschlagen")
@@ -129,6 +134,11 @@ fun guessFromText(text: String): TextGuess {
     val category = when {
         Regex("krankenkasse|versicherer|leistungsabrechnung|ärzt|spital|tarmed|behandlung").containsMatchIn(lower) -> "Krankenkasse"
         Regex("garantie|gewährleistung|warranty").containsMatchIn(lower) -> "Garantie"
+        Regex("police|privathaftpflicht|hausratversicherung|versicherungsprämie").containsMatchIn(lower) -> "Versicherung"
+        Regex("serviceheft|fahrzeugausweis|reifenwechsel|fahrzeugprüfung|kilometerstand").containsMatchIn(lower) -> "Fahrzeug"
+        Regex("mietvertrag|nebenkostenabrechnung|vermieter|hausverwaltung").containsMatchIn(lower) -> "Wohnen"
+        Regex("abonnement|abo-rechnung|monatliche gebühr|abo-gebühr").containsMatchIn(lower) -> "Abonnement"
+        Regex("bedienungsanleitung|gebrauchsanweisung|user manual").containsMatchIn(lower) -> "Bedienungsanleitung"
         Regex("steuererklärung|steueramt|steuerrechnung").containsMatchIn(lower) -> "Steuern"
         Regex("vertrag|vereinbarung|kündigungsfrist").containsMatchIn(lower) -> "Vertrag"
         Regex("rechnung|fällig|zahlung bis|einzahlungsschein|iban|qr-rechnung").containsMatchIn(lower) -> "Rechnung"
@@ -163,4 +173,49 @@ fun guessPurchaseDate(text: String): String {
         LocalDate.of(candidate.groupValues[3].toInt(), candidate.groupValues[2].toInt(),
             candidate.groupValues[1].toInt()).toString()
     }.getOrDefault("")
+}
+
+object CategoryMemory {
+    private fun key(merchant: String): String? {
+        val normalized = merchant.trim().lowercase(java.util.Locale.ROOT)
+            .replace(Regex("[^\\p{L}\\p{N}]+"), "_").take(60)
+        return normalized.takeIf { it.length >= 3 }
+    }
+    fun prediction(ctx: Context, merchant: String): String? =
+        key(merchant)?.let {
+            ctx.getSharedPreferences("archive-category-memory", Context.MODE_PRIVATE)
+                .getString(it, null)
+        }?.takeIf { it in categories && it != "Sonstiges" && it != "Alle" }
+
+    fun remember(ctx: Context, doc: ArchiveDoc) {
+        val id = key(doc.merchant) ?: return
+        if (doc.category !in categories || doc.category in listOf("Alle", "Sonstiges")) return
+        ctx.getSharedPreferences("archive-category-memory", Context.MODE_PRIVATE)
+            .edit().putString(id, doc.category).apply()
+    }
+}
+
+fun similarDocument(
+    existing: List<ArchiveDoc>, merchant: String, amount: String,
+    purchaseDate: String, invoiceNumber: String, text: String
+): ArchiveDoc? {
+    fun norm(s: String) = s.lowercase(java.util.Locale.ROOT)
+        .replace(Regex("[^\\p{L}\\p{N}]"), "")
+    val seller = norm(merchant)
+    val invoice = norm(invoiceNumber)
+    val words = text.lowercase(java.util.Locale.ROOT).split(Regex("[^\\p{L}\\p{N}]+"))
+        .filter { it.length > 4 }.toSet()
+    return existing.firstOrNull { doc ->
+        val sameInvoice = invoice.length >= 5 && invoice == norm(doc.invoiceNumber) &&
+            seller.length >= 3 && seller == norm(doc.merchant)
+        val sameReceipt = seller.length >= 3 && seller == norm(doc.merchant) &&
+            amount.isNotBlank() && amount == doc.amount &&
+            purchaseDate.isNotBlank() && purchaseDate == doc.purchased
+        val oldWords = doc.ocr.lowercase(java.util.Locale.ROOT)
+            .split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length > 4 }.toSet()
+        val overlap = if (words.size >= 8 && oldWords.size >= 8)
+            words.intersect(oldWords).size.toDouble() / words.union(oldWords).size
+            else 0.0
+        sameInvoice || sameReceipt || overlap >= 0.90
+    }
 }

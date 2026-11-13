@@ -65,6 +65,10 @@ object BackupEngine {
             o.put("iban", d.iban); o.put("reference", d.reference); o.put("invoiceNumber", d.invoiceNumber)
             o.put("recurringMonths", d.recurringMonths); o.put("reimbursed", d.reimbursed)
             o.put("deductible", d.deductible); o.put("qrPayload", d.qrPayload)
+            o.put("groupId", d.groupId); o.put("taxRelevant", d.taxRelevant)
+            o.put("cancellationDate", d.cancellationDate); o.put("policyNumber", d.policyNumber)
+            o.put("assetName", d.assetName); o.put("paidDate", d.paidDate)
+            o.put("reimbursedDate", d.reimbursedDate)
             array.put(o)
         }
         val output = ctx.contentResolver.openOutputStream(destination, "w")
@@ -188,7 +192,14 @@ object BackupEngine {
                     recurringMonths = o.optInt("recurringMonths"),
                     reimbursed = o.optString("reimbursed"),
                     deductible = o.optString("deductible"),
-                    qrPayload = o.optString("qrPayload")
+                    qrPayload = o.optString("qrPayload"),
+                    groupId = o.optString("groupId"),
+                    taxRelevant = o.optBoolean("taxRelevant"),
+                    cancellationDate = o.optString("cancellationDate"),
+                    policyNumber = o.optString("policyNumber"),
+                    assetName = o.optString("assetName"),
+                    paidDate = o.optString("paidDate"),
+                    reimbursedDate = o.optString("reimbursedDate")
                 )
                 try { db.put(d); count++ } catch (t: Exception) { newFile.delete(); throw t }
             }

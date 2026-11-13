@@ -102,10 +102,70 @@ object Vault {
         }
     }
 
+    data class Version(val file: File, val timestamp: Long, val sha256: String)
+
+    private fun versionDirectory(ctx: Context, id: String): File {
+        require(id.matches(Regex("[a-zA-Z0-9-]{1,80}")))
+        return File(ctx.filesDir, "versions/$id").apply { mkdirs() }
+    }
+
+    fun versions(ctx: Context, doc: ArchiveDoc): List<Version> =
+        versionDirectory(ctx, doc.id).listFiles().orEmpty().mapNotNull { file ->
+            val m = Regex("([0-9]{13})_([a-f0-9]{64})_[a-z0-9-]+\\.avc").matchEntire(file.name)
+            if (m != null && file.isFile) Version(file, m.groupValues[1].toLong(), m.groupValues[2])
+            else null
+        }.sortedByDescending { it.timestamp }
+
+    fun purgeVersions(ctx: Context, id: String) {
+        versionDirectory(ctx, id).deleteRecursively()
+    }
+
+    private fun snapshot(ctx: Context, doc: ArchiveDoc) {
+        val original = validateFile(ctx, doc.file)
+        if (!original.isFile) return
+        val copy = if (isEncrypted(doc)) original else storeEncrypted(ctx, original)
+        try {
+            val hash = if (doc.sha256.matches(Regex("[a-f0-9]{64}"))) doc.sha256
+                else if (!isEncrypted(doc)) ArchiveEngine.checksum(original)
+                else error("Datei ohne Integritätswert kann nicht versioniert werden")
+            val versionName = "${System.currentTimeMillis()}_${hash}_${UUID.randomUUID()}.avc"
+            val target = File(versionDirectory(ctx, doc.id), versionName)
+            copy.copyTo(target, overwrite = false)
+            versions(ctx, doc).drop(4).forEach { it.file.delete() }
+        } finally {
+            if (!isEncrypted(doc)) copy.delete()
+        }
+    }
+
+    fun restoreVersion(ctx: Context, db: ArchiveDb, doc: ArchiveDoc, version: Version) {
+        require(version in versions(ctx, doc)) { "Version nicht vorhanden" }
+        val temp = File(ArchiveEngine.docsDir(ctx), "${UUID.randomUUID()}.avc")
+        try {
+            version.file.copyTo(temp)
+            val candidate = doc.copy(file = temp.name, sha256 = version.sha256)
+            val plain = plaintext(ctx, candidate)
+            try {
+                replace(ctx, db, doc, plain)
+            } finally { plain.delete() }
+        } finally { temp.delete() }
+    }
+
+    fun shareCopy(ctx: Context, doc: ArchiveDoc): File {
+        val plain = plaintext(ctx, doc)
+        val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
+        val safe = ArchiveExports.suggestedName(doc)
+        val dest = File(dir, safe)
+        try {
+            plain.copyTo(dest, overwrite = true)
+            return dest
+        } finally { if (isEncrypted(doc)) plain.delete() }
+    }
+
     fun replace(ctx: Context, db: ArchiveDb, doc: ArchiveDoc, replacementPlain: File) {
         val encrypted = storeEncrypted(ctx, replacementPlain)
         val old = validateFile(ctx, doc.file)
         try {
+            snapshot(ctx, doc)
             db.put(doc.copy(file = encrypted.name, sha256 = ArchiveEngine.checksum(replacementPlain)))
             old.delete()
         } catch (e: Exception) {
@@ -134,5 +194,6 @@ object Vault {
 
     fun purgeCache(ctx: Context) {
         File(ctx.cacheDir, "decrypted").listFiles()?.forEach { it.delete() }
+        File(ctx.cacheDir, "shared").listFiles()?.forEach { it.delete() }
     }
 }

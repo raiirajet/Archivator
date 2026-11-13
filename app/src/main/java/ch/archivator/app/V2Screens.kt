@@ -15,6 +15,14 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import android.graphics.Bitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -57,7 +65,7 @@ private fun SmallHeadline(title: String, hint: String? = null) {
 @Composable
 private fun HeroStat(label: String, value: String, icon: ImageVector, modifier: Modifier = Modifier) {
     Card(modifier, shape = RoundedCornerShape(17.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(14.dp)) {
             Icon(icon, null, tint = navy2, modifier = Modifier.size(24.dp))
             Spacer(Modifier.height(10.dp))
@@ -75,7 +83,7 @@ private fun BlueTile(label: String, detail: String, icon: ImageVector, onClick: 
                 contentAlignment = Alignment.Center) { Icon(icon, null, tint = navy2) }
             Spacer(Modifier.width(13.dp))
             Column(Modifier.weight(1f)) {
-                Text(label, color = navy2, fontWeight = FontWeight.SemiBold)
+                Text(label, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                 Text(detail, color = grey2, fontSize = 12.sp)
             }
             Icon(Icons.Outlined.ChevronRight, null, tint = navy2)
@@ -158,7 +166,7 @@ fun V2Dashboard(
                     SmallHeadline("Krankenkassen-Cockpit", "Alle Beträge zur Kontrolle")
                     Spacer(Modifier.height(10.dp))
                     Text("Eingereicht: ${swissAmount(insurance.sumOf { money(it.amount) })} CHF",
-                        fontWeight = FontWeight.SemiBold, color = navy2)
+                        fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     Text("Erstattet: ${swissAmount(insurance.sumOf { money(it.reimbursed) })} CHF",
                         color = navy2)
                     Text("Selbstbehalt: ${swissAmount(insurance.sumOf { money(it.deductible) })} CHF",
@@ -177,24 +185,37 @@ fun V2Dashboard(
 }
 
 @Composable
+private fun DocumentThumb(d: ArchiveDoc) {
+    val ctx = LocalContext.current
+    val bmp by produceState<Bitmap?>(initialValue = null, d.id, d.file) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val full = PdfPages.pageBitmap(ctx, d, 0)
+                val small = Bitmap.createScaledBitmap(full, 96, 132, true)
+                if (small !== full) full.recycle()
+                small
+            }.getOrNull()
+        }
+    }
+    Box(Modifier.size(46.dp).background(baby2, RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center) {
+        if (bmp != null) Image(bmp!!.asImageBitmap(), contentDescription = "Dokumentvorschau",
+            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+        else Icon(Icons.Outlined.Description, contentDescription = null, tint = navy2)
+    }
+}
+
+@Composable
 private fun V2DocCard(d: ArchiveDoc, onClick: () -> Unit) {
-    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = Color.White),
+    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(16.dp)) {
         Row(Modifier.fillMaxWidth().padding(14.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(46.dp).background(baby2, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center) {
-                Icon(when (d.category) {
-                    "Rechnung" -> Icons.Outlined.ReceiptLong
-                    "Garantie" -> Icons.Outlined.VerifiedUser
-                    "Krankenkasse" -> Icons.Outlined.HealthAndSafety
-                    else -> Icons.Outlined.Description
-                }, null, tint = navy2)
-            }
+            DocumentThumb(d)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(d.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.SemiBold, color = navy2)
+                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Text("${d.category} · ${d.person.ifBlank { "Privat" }}",
                     color = grey2, fontSize = 12.sp)
             }
@@ -213,15 +234,27 @@ fun V2DocumentList(docs: List<ArchiveDoc>, initialCategory: String,
     var status by remember { mutableStateOf("Alle") }
     val people = listOf("Alle") + docs.map { it.person }.filter { it.isNotBlank() }.distinct().sorted()
     val words = query.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    val ctx = LocalContext.current
+    var searchIds by remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(query, docs) {
+        if (query.isBlank()) searchIds = null
+        else {
+            delay(180)
+            searchIds = withContext(Dispatchers.IO) {
+                ArchiveDb(ctx).use { it.searchIds(query) }
+            }
+        }
+    }
     val filtered = docs.filter { d ->
         (category == "Alle" || d.category == category) &&
         (person == "Alle" || person == d.person) &&
         (status == "Alle" || status == d.status) &&
-        words.all { w ->
-            listOf(d.title, d.ocr, d.tags, d.person, d.note, d.category,
-                d.merchant, d.amount, d.iban, d.reference, d.invoiceNumber,
-                d.purchased, d.due, d.reimbursed).any { it.contains(w, ignoreCase = true) }
-        }
+        (query.isBlank() || (searchIds != null && d.id in searchIds!!) ||
+            words.all { w ->
+                listOf(d.title, d.tags, d.person, d.note, d.category,
+                    d.amount, d.purchased, d.due, d.policyNumber, d.assetName,
+                    d.cancellationDate).any { it.contains(w, ignoreCase = true) }
+            })
     }
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(query, { query = it },
@@ -282,13 +315,13 @@ fun V2Deadlines(docs: List<ArchiveDoc>, onOpen: (ArchiveDoc) -> Unit) {
         else items(events, key = { it.first.id + it.third }) { (d, date, kind) ->
             val days = ChronoUnit.DAYS.between(now, date)
             Card(onClick = { onOpen(d) }, shape = RoundedCornerShape(17.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (kind == "Garantieende") Icons.Outlined.VerifiedUser else Icons.Outlined.Event,
                         null, tint = if (days < 0) red2 else navy2)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(d.title, fontWeight = FontWeight.SemiBold, color = navy2,
+                        Text(d.title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text("$kind · $date", color = grey2, fontSize = 12.sp)
                         if (d.recurringMonths > 0) Text("Alle ${d.recurringMonths} Monate",
@@ -320,12 +353,14 @@ private fun EditorField(title: String, value: String, keyboard: KeyboardType = K
 @Composable
 fun V2DocumentEditor(
     doc: ArchiveDoc,
+    allDocs: List<ArchiveDoc> = emptyList(),
     onBack: () -> Unit,
     onSave: (ArchiveDoc) -> Unit,
     onDelete: () -> Unit,
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onPreview: () -> Unit,
+    onVersions: () -> Unit,
     onPickDate: (String, (String) -> Unit) -> Unit
 ) {
     var title by remember(doc.id) { mutableStateOf(doc.title) }
@@ -346,6 +381,13 @@ fun V2DocumentEditor(
     var deductible by remember(doc.id) { mutableStateOf(doc.deductible) }
     var ocr by remember(doc.id) { mutableStateOf(doc.ocr) }
     var note by remember(doc.id) { mutableStateOf(doc.note) }
+    var groupId by remember(doc.id) { mutableStateOf(doc.groupId) }
+    var taxRelevant by remember(doc.id) { mutableStateOf(doc.taxRelevant) }
+    var cancellationDate by remember(doc.id) { mutableStateOf(doc.cancellationDate) }
+    var policyNumber by remember(doc.id) { mutableStateOf(doc.policyNumber) }
+    var assetName by remember(doc.id) { mutableStateOf(doc.assetName) }
+    var paidDate by remember(doc.id) { mutableStateOf(doc.paidDate) }
+    var reimbursedDate by remember(doc.id) { mutableStateOf(doc.reimbursedDate) }
     var deleteConfirm by remember { mutableStateOf(false) }
     val guarantee = runCatching { LocalDate.parse(purchase).plusMonths(warranty.toLong()) }.getOrNull()
     Scaffold(
@@ -364,7 +406,10 @@ fun V2DocumentEditor(
                         iban = iban, reference = reference, invoiceNumber = invoice,
                         recurringMonths = recurring.toIntOrNull()?.coerceIn(0, 120) ?: 0,
                         reimbursed = reimbursed, deductible = deductible,
-                        note = note, ocr = ocr))
+                        groupId = groupId.trim(), taxRelevant = taxRelevant,
+                        cancellationDate = cancellationDate, policyNumber = policyNumber,
+                        assetName = assetName, paidDate = paidDate,
+                        reimbursedDate = reimbursedDate, note = note, ocr = ocr))
                 }) { Text("Speichern", color = navy2, fontWeight = FontWeight.Bold) }
             }
         }, containerColor = subtle2
@@ -386,10 +431,17 @@ fun V2DocumentEditor(
                     IconButton(onClick = onOpen) { Icon(Icons.Outlined.OpenInNew, "Extern öffnen", tint = navy2) }
                 }
             }
+            item {
+                OutlinedButton(onClick = onVersions, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.History, null)
+                    Spacer(Modifier.width(7.dp))
+                    Text("Frühere PDF-Versionen anzeigen / wiederherstellen")
+                }
+            }
             item { SmallHeadline("Allgemeine Angaben", "Automatisch erkannte Werte bitte überprüfen") }
             item { EditorField("Dokumentname", title) { title = it } }
             item {
-                Text("Kategorie", color = navy2, fontWeight = FontWeight.SemiBold)
+                Text("Kategorie", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                 Row(Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     categories.drop(1).forEach { c ->
@@ -398,7 +450,7 @@ fun V2DocumentEditor(
                 }
             }
             item {
-                Text("Status", color = navy2, fontWeight = FontWeight.SemiBold)
+                Text("Status", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                 Row(Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     states.forEach { s ->
@@ -408,6 +460,22 @@ fun V2DocumentEditor(
             }
             item { EditorField("Haushaltsmitglied / Ordner", person) { person = it } }
             item { EditorField("Tags (durch Komma getrennt)", tags) { tags = it } }
+            item { EditorField("Vorgang (Quittung, Garantie, Rechnung verbinden)", groupId) { groupId = it } }
+            if (allDocs.any { it.groupId.isNotBlank() && it.groupId != groupId }) item {
+                Text("Bestehende Vorgänge", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    allDocs.map { it.groupId }.filter { it.isNotBlank() }.distinct().take(15).forEach { g ->
+                        SuggestionChip(onClick = { groupId = g }, label = { Text(g) })
+                    }
+                }
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = taxRelevant, onCheckedChange = { taxRelevant = it })
+                    Text("Für Steuerordner markieren", color = MaterialTheme.colorScheme.onSurface)
+                }
+            }
             item { EditorField("Händler / Empfänger", merchant) { merchant = it } }
             item { EditorField("Betrag in CHF", amount, KeyboardType.Decimal) { amount = it } }
             item {
@@ -418,11 +486,12 @@ fun V2DocumentEditor(
                     }
                 }
             }
-            if (category == "Rechnung") {
+            if (category == "Rechnung" || category == "Abonnement") {
                 item { SmallHeadline("Schweizer Rechnung", "QR-Rechnungsdaten werden offline erkannt") }
                 item { EditorField("IBAN / QR-IBAN", iban) { iban = it } }
                 item { EditorField("Zahlungsreferenz", reference) { reference = it } }
                 item { EditorField("Rechnungsnummer", invoice) { invoice = it } }
+                item { EditorField("Bezahlt am (JJJJ-MM-TT)", paidDate) { paidDate = it } }
                 item { EditorField("Wiederholung alle X Monate (0 = einmalig)", recurring,
                     KeyboardType.Number) { recurring = it } }
                 if (doc.qrPayload.isNotBlank()) item {
@@ -447,13 +516,29 @@ fun V2DocumentEditor(
                     Text("Garantieende: $guarantee", color = navy2, fontWeight = FontWeight.Bold)
                 }
             }
+            if (category in listOf("Versicherung", "Vertrag", "Abonnement", "Fahrzeug", "Wohnen")) {
+                item { SmallHeadline("Vertrag, Objekt und Fristen") }
+                item { EditorField("Policen-/Vertragsnummer", policyNumber) { policyNumber = it } }
+                item { EditorField("Objekt oder Gerät / Fahrzeug", assetName) { assetName = it } }
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) {
+                            EditorField("Kündigung / Prüfung (JJJJ-MM-TT)", cancellationDate) { cancellationDate = it }
+                        }
+                        IconButton(onClick = { onPickDate(cancellationDate) { cancellationDate = it } }) {
+                            Icon(Icons.Outlined.Event, "Frist wählen", tint = navy2)
+                        }
+                    }
+                }
+            }
             if (category == "Krankenkasse") {
                 item { SmallHeadline("Krankenkasse", "Leistungsabrechnung und Rückerstattung") }
                 item { EditorField("Erstatteter Betrag CHF", reimbursed, KeyboardType.Decimal) { reimbursed = it } }
+                item { EditorField("Erstattet am (JJJJ-MM-TT)", reimbursedDate) { reimbursedDate = it } }
                 item { EditorField("Selbstbehalt / Franchise CHF", deductible, KeyboardType.Decimal) { deductible = it } }
                 item {
                     Text("Noch nicht erstattet: ${swissAmount((money(amount) - money(reimbursed) - money(deductible)).coerceAtLeast(0.0))} CHF",
-                        color = navy2, fontWeight = FontWeight.SemiBold)
+                        color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                 }
             }
             item { SmallHeadline("Weitere Angaben") }

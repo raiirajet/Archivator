@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
@@ -64,6 +65,17 @@ class MainActivity : FragmentActivity() {
     private lateinit var database: ArchiveDb
     private var docs by mutableStateOf<List<ArchiveDoc>>(emptyList())
     private var tab by mutableIntStateOf(0)
+    private var tabTrail by mutableStateOf<List<Int>>(emptyList())
+    private var extraPage by mutableStateOf<String?>(null)
+    private var extraTrail by mutableStateOf<List<String>>(emptyList())
+    private var showVersionsFor by mutableStateOf<String?>(null)
+    private var pdfExtractDocId: String? = null
+    private var pdfExtractIndex: Int = 0
+    private var autoBackupPassword: String? = null
+    private var confirmExit by mutableStateOf(false)
+    private var darkAppearance by mutableStateOf(false)
+    private var homeWidgets by mutableStateOf<List<String>>(HomeWidgets.default)
+
     private var editing by mutableStateOf<String?>(null)
     private var previewDoc by mutableStateOf<String?>(null)
     private var initialArchiveCategory by mutableStateOf("Alle")
@@ -74,6 +86,35 @@ class MainActivity : FragmentActivity() {
     private var cameraUri: Uri? = null
     private var backupPassword: String? = null
     private var restorePassword: String? = null
+    private var taxExportYear = LocalDate.now().year
+    private var csvExportYear = LocalDate.now().year
+
+    private fun changeTab(target: Int) {
+        if (target == tab) return
+        tabTrail = tabTrail + tab
+        tab = target
+    }
+    private fun openSection(section: String) {
+        if (extraPage != null && extraPage != section) extraTrail = extraTrail + extraPage!!
+        extraPage = section
+    }
+    private fun backOneLevel() {
+        when {
+            previewDoc != null -> previewDoc = null
+            editing != null -> editing = null
+            extraPage != null -> {
+                extraPage = extraTrail.lastOrNull()
+                extraTrail = extraTrail.dropLast(1)
+            }
+            tabTrail.isNotEmpty() -> {
+                tab = tabTrail.last()
+                tabTrail = tabTrail.dropLast(1)
+            }
+            tab != 0 -> tab = 0
+            else -> confirmExit = true
+        }
+    }
+
 
     private val scannerResult = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
@@ -97,6 +138,56 @@ class MainActivity : FragmentActivity() {
         if (!granted) toast("Fristen erscheinen in der App; Benachrichtigungen sind nicht erlaubt")
     }
 
+    private val pdfExtractPicker =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+            val docId = pdfExtractDocId
+            if (uri != null && docId != null) {
+                val doc = database.byId(docId)
+                if (doc != null) lifecycleScope.launch {
+                    importBusy = true
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching { PdfPages.extract(this@MainActivity, doc, pdfExtractIndex, uri) }
+                    }
+                    importBusy = false
+                    toast(if (result.isSuccess) "PDF-Seite exportiert"
+                        else "PDF-Export fehlgeschlagen: ${result.exceptionOrNull()?.message}")
+                }
+            }
+            pdfExtractDocId = null
+        }
+
+    private val autoBackupPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val password = autoBackupPassword
+        autoBackupPassword = null
+        if (uri != null && password != null) lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { AutoBackups.configure(this@MainActivity, uri, password) }
+            }
+            toast(if (result.isSuccess) "Automatische verschlüsselte Sicherungen eingerichtet"
+                else "Automatisches Backup: ${result.exceptionOrNull()?.message}")
+        }
+    }
+
+    private val taxPicker = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) lifecycleScope.launch {
+            importBusy = true
+            val result = withContext(Dispatchers.IO) {
+                runCatching { ArchiveExports.taxPackage(this@MainActivity, database, uri, taxExportYear) }
+            }
+            importBusy = false
+            toast(result.fold({ "$it Steuerbelege exportiert" }, { "Steuerexport: ${it.message}" }))
+        }
+    }
+    private val csvPicker = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) lifecycleScope.launch {
+            importBusy = true
+            val result = withContext(Dispatchers.IO) {
+                runCatching { ArchiveExports.financeCsv(this@MainActivity, database, uri, csvExportYear) }
+            }
+            importBusy = false
+            toast(result.fold({ "CSV exportiert" }, { "CSV-Export: ${it.message}" }))
+        }
+    }
     private val backupPicker = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val password = backupPassword
         backupPassword = null
@@ -136,6 +227,8 @@ class MainActivity : FragmentActivity() {
         database = ArchiveDb(this)
         fingerprintEnabled = getPreferences(MODE_PRIVATE).getBoolean("biometric", false)
         remindersEnabled = getPreferences(MODE_PRIVATE).getBoolean("reminders", true)
+        darkAppearance = getPreferences(MODE_PRIVATE).getBoolean("appearance_dark", false)
+        homeWidgets = HomeWidgets.load(this)
         locked = fingerprintEnabled
         Vault.purgeCache(this)
         refresh()
@@ -149,22 +242,51 @@ class MainActivity : FragmentActivity() {
             refresh()
         }
         if (remindersEnabled) scheduleDeadlines(this)
+        if (AutoBackups.enabled(this)) AutoBackups.schedule(this)
         window.statusBarColor = AndroidColor.rgb(172, 216, 246)
         window.navigationBarColor = AndroidColor.WHITE
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(
+            MaterialTheme(colorScheme = if (darkAppearance) darkColorScheme(
+                primary = Color(0xFFACD8F6), onPrimary = Color(0xFF082949),
+                secondary = Color(0xFFA9D6FF), surface = Color(0xFF13243A),
+                background = Color(0xFF091726), onSurface = Color.White
+            ) else lightColorScheme(
                 primary = forest, onPrimary = Color.White,
-                secondary = coral, background = canvas, surface = Color.White,
-                onSurface = ink
+                secondary = Color(0xFF85C4F5), background = canvas,
+                surface = Color.White, onSurface = ink
             )) {
                 if (locked) LockScreen { authenticate() } else AppScreen()
             }
         }
         if (locked) authenticate()
-        if (intent?.action == Intent.ACTION_SEND) {
-            @Suppress("DEPRECATION")
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-            if (uri != null) importDocument(uri, intent.type)
+        processIncoming(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        processIncoming(intent)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (fingerprintEnabled && !isChangingConfigurations) locked = true
+    }
+
+    private fun processIncoming(intent: Intent?) {
+        if (intent == null) return
+        when (intent.action) {
+            Intent.ACTION_SEND -> {
+                @Suppress("DEPRECATION")
+                val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                if (uri != null) importDocument(uri, intent.type)
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                @Suppress("DEPRECATION")
+                val uris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                uris?.take(30)?.forEach { importDocument(it, intent.type) }
+            }
+            Intent.ACTION_VIEW -> intent.data?.let { importDocument(it, intent.type) }
         }
     }
 
@@ -208,7 +330,7 @@ class MainActivity : FragmentActivity() {
     private fun openFile(d: ArchiveDoc, share: Boolean) {
         lifecycleScope.launch {
             val fileResult = withContext(Dispatchers.IO) {
-                runCatching { Vault.plaintext(this@MainActivity, d) }
+                runCatching { Vault.shareCopy(this@MainActivity, d) }
             }
             fileResult.onFailure { toast("Dokument kann nicht geöffnet werden: ${it.message}") }
             val file = fileResult.getOrNull() ?: return@launch
@@ -231,6 +353,7 @@ class MainActivity : FragmentActivity() {
     private fun deleteDoc(d: ArchiveDoc) {
         database.remove(d.id)
         File(ArchiveEngine.docsDir(this), d.file).delete()
+        Vault.purgeVersions(this, d.id)
         editing = null
         refresh()
         toast("Dokument gelöscht")
@@ -285,24 +408,89 @@ class MainActivity : FragmentActivity() {
 
     @Composable
     private fun AppScreen() {
+        BackHandler { backOneLevel() }
         var showImport by remember { mutableStateOf(false) }
+        if (confirmExit) {
+            AlertDialog(onDismissRequest = { confirmExit = false },
+                title = { Text("Archivator verlassen?") },
+                text = { Text("Deine archivierten Dokumente bleiben gespeichert.") },
+                confirmButton = { TextButton(onClick = { confirmExit = false; finish() }) { Text("Schliessen") } },
+                dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("In der App bleiben") } })
+        }
+        val historyDoc = showVersionsFor?.let { id -> docs.firstOrNull { it.id == id } }
+        if (historyDoc != null) {
+            val versions = remember(historyDoc.id, docs) { Vault.versions(this, historyDoc) }
+            AlertDialog(onDismissRequest = { showVersionsFor = null },
+                title = { Text("Vorherige Dateiversionen") },
+                text = {
+                    Column {
+                        Text("Bis zu vier verschlüsselte ältere Dateiversionen werden auf diesem Gerät aufbewahrt.",
+                            fontSize = 12.sp)
+                        versions.forEach { version ->
+                            TextButton(onClick = {
+                                showVersionsFor = null
+                                lifecycleScope.launch {
+                                    importBusy = true
+                                    val result = withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            Vault.restoreVersion(this@MainActivity, database, historyDoc, version)
+                                        }
+                                    }
+                                    importBusy = false
+                                    refresh()
+                                    toast(if (result.isSuccess) "Dateiversion wiederhergestellt"
+                                        else "Wiederherstellung: ${result.exceptionOrNull()?.message}")
+                                }
+                            }) {
+                                Text(java.time.Instant.ofEpochMilli(version.timestamp)
+                                    .atZone(java.time.ZoneId.systemDefault())
+                                    .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")))
+                            }
+                        }
+                        if (versions.isEmpty()) Text("Noch keine älteren Versionen vorhanden.")
+                    }
+                },
+                confirmButton = { TextButton(onClick = { showVersionsFor = null }) { Text("Schliessen") } })
+        }
         val preview = previewDoc?.let { id -> docs.firstOrNull { it.id == id } }
         if (preview != null) {
-            PdfPreviewScreen(this, preview, onBack = { previewDoc = null },
-                onUpdated = { previewDoc = null; refresh(); toast("PDF aktualisiert") })
+            PdfPreviewScreen(this, preview, allDocs = docs,
+                onBack = { previewDoc = null },
+                onUpdated = { previewDoc = null; refresh(); toast("PDF aktualisiert") },
+                onExtract = { index ->
+                    pdfExtractDocId = preview.id
+                    pdfExtractIndex = index
+                    pdfExtractPicker.launch("Archivator-Seite-${index + 1}.pdf")
+                })
             return
         }
         val selected = editing?.let { id -> docs.firstOrNull { it.id == id } }
         if (selected != null) {
             V2DocumentEditor(
                 doc = selected,
+                allDocs = docs,
                 onBack = { editing = null },
-                onSave = { database.put(it); refresh(); editing = null; toast("Dokument gespeichert") },
+                onSave = { database.put(it); CategoryMemory.remember(this@MainActivity, it); refresh(); editing = null; toast("Dokument gespeichert") },
                 onDelete = { deleteDoc(selected) },
                 onOpen = { openFile(selected, false) },
                 onShare = { openFile(selected, true) },
                 onPreview = { previewDoc = selected.id },
+                onVersions = { showVersionsFor = selected.id },
                 onPickDate = { initial, callback -> chooseDate(initial, callback) }
+            )
+            return
+        }
+        val extras = extraPage
+        if (extras != null) {
+            V3SectionScreen(
+                section = extras, docs = docs,
+                onBack = { backOneLevel() },
+                onOpen = { editing = it.id },
+                onScan = { scan() },
+                onSection = ::openSection,
+                onTaxExport = { taxExportYear = it; taxPicker.launch("Archivator-Steuern-$it.zip") },
+                onCsvExport = { csvExportYear = it; csvPicker.launch("Archivator-Finanzen-$it.csv") },
+                onSaveDoc = { database.put(it); refresh() }
             )
             return
         }
@@ -310,28 +498,37 @@ class MainActivity : FragmentActivity() {
             containerColor = canvas,
             topBar = { BrandHeader() },
             bottomBar = {
-                NavigationBar(containerColor = Color.White) {
-                    val names = listOf("Übersicht", "Archiv", "Fristen", "Mehr")
-                    val icons = listOf(Icons.Outlined.Home, Icons.Outlined.FolderOpen, Icons.Outlined.Event, Icons.Outlined.Settings)
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    val names = listOf("Übersicht", "Archiv", "Scannen", "Fristen", "Mehr")
+                    val icons = listOf(Icons.Outlined.Home, Icons.Outlined.FolderOpen,
+                        Icons.Outlined.DocumentScanner, Icons.Outlined.Event, Icons.Outlined.Settings)
                     names.forEachIndexed { i, name ->
-                        NavigationBarItem(selected = tab == i, onClick = { tab = i },
+                        val target = if (i >= 3) i - 1 else i
+                        NavigationBarItem(
+                            selected = i != 2 && tab == target,
+                            onClick = {
+                                if (i == 2) showImport = true
+                                else {
+                                    if (target == 1) initialArchiveCategory = "Alle"
+                                    changeTab(target)
+                                }
+                            },
                             label = { Text(name, fontSize = 11.sp) },
-                            icon = { Icon(icons[i], contentDescription = null) })
+                            icon = {
+                                Icon(icons[i], contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary)
+                            }
+                        )
                     }
                 }
             },
-            floatingActionButton = {
-                if (tab != 3) ExtendedFloatingActionButton(
-                    onClick = { showImport = true }, containerColor = forest, contentColor = Color.White,
-                    icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                    text = { Text("Dokument") }
-                )
-            }
         ) { inner ->
             Box(Modifier.padding(inner).fillMaxSize()) {
                 when (tab) {
-                    0 -> V2Dashboard(docs, onOpen = { editing = it.id }, onScan = { scan() },
-                        onBrowse = { initialArchiveCategory = it; tab = 1 })
+                    0 -> V3Dashboard(docs, widgets = homeWidgets,
+                        onOpen = { editing = it.id }, onScan = { scan() },
+                        onBrowse = { initialArchiveCategory = it; changeTab(1); initialArchiveCategory = it },
+                        onSection = ::openSection)
                     1 -> V2DocumentList(docs, initialCategory = initialArchiveCategory,
                         onOpen = { editing = it.id })
                     2 -> V2Deadlines(docs, onOpen = { editing = it.id })
@@ -339,9 +536,23 @@ class MainActivity : FragmentActivity() {
                         docs.size, fingerprintEnabled, remindersEnabled,
                         onFingerprint = ::setBiometric, onReminder = ::setReminders,
                         onBackup = { backupPassword = it; backupPicker.launch("Archivator-${LocalDate.now()}.arc") },
-                        onRestore = { restorePassword = it; restorePicker.launch(arrayOf("*/*")) }
-                    )
-                }
+                        onRestore = { restorePassword = it; restorePicker.launch(arrayOf("*/*")) },
+                        onSection = ::openSection,
+                        dark = darkAppearance,
+                        onDark = {
+                            darkAppearance = it
+                            getPreferences(MODE_PRIVATE).edit().putBoolean("appearance_dark", it).apply()
+                        },
+                        widgets = homeWidgets,
+                        autoEnabled = AutoBackups.enabled(this@MainActivity),
+                        autoLast = AutoBackups.lastResult(this@MainActivity),
+                        onAutoBackup = { autoBackupPassword = it; autoBackupPicker.launch(null) },
+                        onAutoDisable = { AutoBackups.disable(this@MainActivity); toast("Automatisches Backup deaktiviert") },
+                        onWidgets = {
+                            homeWidgets = it
+                            HomeWidgets.save(this@MainActivity, it)
+                        }
+                    )                }
                 if (importBusy) {
                     Box(Modifier.fillMaxSize().background(Color(0x66000000)), contentAlignment = Alignment.Center) {
                         Card { Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -744,7 +955,11 @@ private fun FormField(label: String, value: String, keyboard: KeyboardType = Key
 private fun SettingsPage(
     count: Int, fingerprint: Boolean, reminders: Boolean,
     onFingerprint: (Boolean) -> Unit, onReminder: (Boolean) -> Unit,
-    onBackup: (String) -> Unit, onRestore: (String) -> Unit
+    onBackup: (String) -> Unit, onRestore: (String) -> Unit,
+    onSection: (String) -> Unit, dark: Boolean, onDark: (Boolean) -> Unit,
+    widgets: List<String>, onWidgets: (List<String>) -> Unit,
+    autoEnabled: Boolean, autoLast: String,
+    onAutoBackup: (String) -> Unit, onAutoDisable: () -> Unit
 ) {
     var passwordDialog by remember { mutableStateOf<String?>(null) }
     var password by remember { mutableStateOf("") }
@@ -784,6 +999,30 @@ private fun SettingsPage(
             }
         }
         item {
+            Text("Verwaltungsbereiche", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                V3Sections.all.forEach { section ->
+                    OutlinedCard(onClick = { onSection(section) }, modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(section, modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                            Icon(Icons.Outlined.ChevronRight, contentDescription = null)
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.DarkMode, contentDescription = null)
+                Spacer(Modifier.width(10.dp))
+                Text("Dunkles Design", modifier = Modifier.weight(1f))
+                Switch(checked = dark, onCheckedChange = onDark)
+            }
+        }
+        item { HomeWidgets.Editor(widgets, onWidgets) }
+        item {
             Text("Datensicherung", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text("AES-256-GCM-verschlüsselt. Passwort sicher aufbewahren – ohne Passwort sind die Daten nicht wiederherstellbar.",
                 color = muted, fontSize = 12.sp)
@@ -805,7 +1044,24 @@ private fun SettingsPage(
             }
         }
         item {
-            Text("Archivator v1.0 · Offline-first", fontSize = 12.sp, color = muted)
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(15.dp)) {
+                    Text("Automatische verschlüsselte Sicherung", fontWeight = FontWeight.SemiBold)
+                    Text("Täglich im selbst ausgewählten Ordner, optional auch über einen Cloud-Dateianbieter.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text(autoLast, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    OutlinedButton(onClick = {
+                        if (autoEnabled) onAutoDisable()
+                        else { password = ""; passwordDialog = "auto" }
+                    }) { Text(if (autoEnabled) "Automatisches Backup deaktivieren" else "Automatische Sicherung einrichten") }
+                    Text("Das Passwort wird geschützt auf dem Gerät hinterlegt. Für Gerätewechsel Passwort separat aufbewahren.",
+                        fontSize = 11.sp)
+                }
+            }
+        }
+        item {
+            Text("Archivator v2.5 · Offline-first", fontSize = 12.sp, color = muted)
             Text("Der ML-Kit-Scanner benötigt Google Play-Dienste; die Texterkennung läuft lokal.",
                 color = muted, fontSize = 12.sp)
         }
@@ -814,7 +1070,9 @@ private fun SettingsPage(
         val kind = passwordDialog
         AlertDialog(
             onDismissRequest = { passwordDialog = null },
-            title = { Text(if (kind == "backup") "Backup-Passwort festlegen" else "Backup entschlüsseln") },
+            title = { Text(if (kind == "backup") "Backup-Passwort festlegen"
+                else if (kind == "auto") "Passwort für automatische Backups"
+                else "Backup entschlüsseln") },
             text = {
                 Column {
                     Text("Mindestens 8 Zeichen. Das Passwort wird nicht gespeichert.")
@@ -827,7 +1085,11 @@ private fun SettingsPage(
             confirmButton = {
                 TextButton(enabled = password.length >= 8, onClick = {
                     passwordDialog = null
-                    if (kind == "backup") onBackup(password) else onRestore(password)
+                    when (kind) {
+                        "backup" -> onBackup(password)
+                        "auto" -> onAutoBackup(password)
+                        else -> onRestore(password)
+                    }
                 }) { Text("Weiter") }
             },
             dismissButton = { TextButton(onClick = { passwordDialog = null }) { Text("Abbrechen") } }

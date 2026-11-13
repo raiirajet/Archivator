@@ -34,7 +34,10 @@ class DeadlineWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 !due.isAfter(today.plusDays(3))
             val warrantySoon = d.warrantyMonths > 0 && warranty != null &&
                 !warranty.isBefore(today) && !warranty.isAfter(today.plusDays(30))
-            dueSoon || warrantySoon
+            val cancellation = runCatching { LocalDate.parse(d.cancellationDate) }.getOrNull()
+            val cancelSoon = cancellation != null && !cancellation.isBefore(today) &&
+                !cancellation.isAfter(today.plusDays(30))
+            dueSoon || warrantySoon || cancelSoon
         }
         if (upcoming.isEmpty()) return Result.success()
         val context = applicationContext
@@ -50,7 +53,8 @@ class DeadlineWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         nm.notify(234, NotificationCompat.Builder(context, "deadlines")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Archivator: ${upcoming.size} Frist(en)")
-            .setContentText(upcoming.take(2).joinToString(", ") { it.title })
+            .setContentText("Prüfe die Fristen in deinem privaten Archiv.")
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(intent)
             .setAutoCancel(true).build())
         return Result.success()
