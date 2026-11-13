@@ -308,8 +308,8 @@ fun V2Deadlines(docs: List<ArchiveDoc>, onOpen: (ArchiveDoc) -> Unit) {
 }
 
 @Composable
-private fun EditorField(title: String, value: String, onChange: (String) -> Unit,
-                        keyboard: KeyboardType = KeyboardType.Text, minLines: Int = 1) {
+private fun EditorField(title: String, value: String, keyboard: KeyboardType = KeyboardType.Text,
+                        minLines: Int = 1, onChange: (String) -> Unit) {
     OutlinedTextField(value = value, onValueChange = onChange,
         label = { Text(title, fontSize = 13.sp) },
         modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
@@ -409,7 +409,7 @@ fun V2DocumentEditor(
             item { EditorField("Haushaltsmitglied / Ordner", person) { person = it } }
             item { EditorField("Tags (durch Komma getrennt)", tags) { tags = it } }
             item { EditorField("Händler / Empfänger", merchant) { merchant = it } }
-            item { EditorField("Betrag in CHF", amount, { amount = it }, KeyboardType.Decimal) }
+            item { EditorField("Betrag in CHF", amount, KeyboardType.Decimal) { amount = it } }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) { EditorField("Fälligkeitsdatum (JJJJ-MM-TT)", due) { due = it } }
@@ -424,7 +424,7 @@ fun V2DocumentEditor(
                 item { EditorField("Zahlungsreferenz", reference) { reference = it } }
                 item { EditorField("Rechnungsnummer", invoice) { invoice = it } }
                 item { EditorField("Wiederholung alle X Monate (0 = einmalig)", recurring,
-                    { recurring = it }, KeyboardType.Number) }
+                    KeyboardType.Number) { recurring = it } }
                 if (doc.qrPayload.isNotBlank()) item {
                     Surface(color = baby2, shape = RoundedCornerShape(14.dp)) {
                         Text("Schweizer QR-Rechnung erkannt. Bitte Betrag, IBAN und Referenz vor der Zahlung kontrollieren.",
@@ -442,23 +442,23 @@ fun V2DocumentEditor(
                         }
                     }
                 }
-                item { EditorField("Garantie (Monate)", warranty, { warranty = it }, KeyboardType.Number) }
+                item { EditorField("Garantie (Monate)", warranty, KeyboardType.Number) { warranty = it } }
                 if (guarantee != null) item {
                     Text("Garantieende: $guarantee", color = navy2, fontWeight = FontWeight.Bold)
                 }
             }
             if (category == "Krankenkasse") {
                 item { SmallHeadline("Krankenkasse", "Leistungsabrechnung und Rückerstattung") }
-                item { EditorField("Erstatteter Betrag CHF", reimbursed, { reimbursed = it }, KeyboardType.Decimal) }
-                item { EditorField("Selbstbehalt / Franchise CHF", deductible, { deductible = it }, KeyboardType.Decimal) }
+                item { EditorField("Erstatteter Betrag CHF", reimbursed, KeyboardType.Decimal) { reimbursed = it } }
+                item { EditorField("Selbstbehalt / Franchise CHF", deductible, KeyboardType.Decimal) { deductible = it } }
                 item {
                     Text("Noch nicht erstattet: ${swissAmount((money(amount) - money(reimbursed) - money(deductible)).coerceAtLeast(0.0))} CHF",
                         color = navy2, fontWeight = FontWeight.SemiBold)
                 }
             }
             item { SmallHeadline("Weitere Angaben") }
-            item { EditorField("Notizen", note, { note = it }, minLines = 3) }
-            item { EditorField("OCR-Volltext (korrigierbar)", ocr, { ocr = it }, minLines = 5) }
+            item { EditorField("Notizen", note, minLines = 3) { note = it } }
+            item { EditorField("OCR-Volltext (korrigierbar)", ocr, minLines = 5) { ocr = it } }
             item {
                 TextButton(onClick = { deleteConfirm = true }) {
                     Icon(Icons.Outlined.DeleteOutline, null, tint = red2)
