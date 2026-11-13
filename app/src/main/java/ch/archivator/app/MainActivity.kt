@@ -162,7 +162,7 @@ class MainActivity : FragmentActivity() {
     private fun importDocument(uri: Uri, type: String? = null) {
         lifecycleScope.launch {
             importBusy = true
-            val (doc, warning) = ArchiveEngine.import(this@MainActivity, database, uri, type)
+            val (doc, warning) = ArchiveEngine.importDocument(this@MainActivity, database, uri, type)
             importBusy = false
             refresh()
             if (warning != null) toast(warning)
