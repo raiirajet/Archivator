@@ -44,7 +44,15 @@ object BackupEngine {
             init(Cipher.ENCRYPT_MODE, key(password, salt), GCMParameterSpec(128, iv))
         }
         val docs = db.all()
-        val exported = docs.associate { d -> d.id to (d.id + if (d.mime.contains("pdf")) ".pdf" else ".jpg") }
+        val exported = docs.associate { d ->
+            val ext = when {
+                d.mime.contains("pdf") -> ".pdf"
+                d.mime.contains("png") -> ".png"
+                d.mime.contains("webp") -> ".webp"
+                else -> ".jpg"
+            }
+            d.id to (d.id + ext)
+        }
         val array = JSONArray()
         docs.forEach { d ->
             val o = JSONObject()
