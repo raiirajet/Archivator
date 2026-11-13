@@ -44,6 +44,7 @@ object BackupEngine {
             init(Cipher.ENCRYPT_MODE, key(password, salt), GCMParameterSpec(128, iv))
         }
         val docs = db.all()
+        val exported = docs.associate { d -> d.id to (d.id + if (d.mime.contains("pdf")) ".pdf" else ".jpg") }
         val array = JSONArray()
         docs.forEach { d ->
             val o = JSONObject()
@@ -51,8 +52,11 @@ object BackupEngine {
             o.put("person", d.person); o.put("tags", d.tags); o.put("ocr", d.ocr)
             o.put("merchant", d.merchant); o.put("amount", d.amount); o.put("due", d.due)
             o.put("purchased", d.purchased); o.put("warrantyMonths", d.warrantyMonths)
-            o.put("status", d.status); o.put("note", d.note); o.put("file", d.file)
+            o.put("status", d.status); o.put("note", d.note); o.put("file", exported.getValue(d.id))
             o.put("mime", d.mime); o.put("sha256", d.sha256); o.put("created", d.created)
+            o.put("iban", d.iban); o.put("reference", d.reference); o.put("invoiceNumber", d.invoiceNumber)
+            o.put("recurringMonths", d.recurringMonths); o.put("reimbursed", d.reimbursed)
+            o.put("deductible", d.deductible); o.put("qrPayload", d.qrPayload)
             array.put(o)
         }
         val output = ctx.contentResolver.openOutputStream(destination, "w")
@@ -64,11 +68,13 @@ object BackupEngine {
                 zip.write(array.toString().toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
                 docs.forEach { d ->
-                    val f = File(ArchiveEngine.docsDir(ctx), d.file)
-                    if (f.isFile && safeName.matches(f.name)) {
-                        zip.putNextEntry(ZipEntry("docs/" + f.name))
+                    val f = Vault.plaintext(ctx, d)
+                    try {
+                        zip.putNextEntry(ZipEntry("docs/" + exported.getValue(d.id)))
                         f.inputStream().use { it.copyTo(zip) }
                         zip.closeEntry()
+                    } finally {
+                        if (Vault.isEncrypted(d)) f.delete()
                     }
                 }
             }
@@ -150,8 +156,7 @@ object BackupEngine {
                 if (!staged.isFile) continue
                 val hash = ArchiveEngine.checksum(staged)
                 if (db.byHash(hash) != null) continue
-                val newFile = File(ArchiveEngine.docsDir(ctx), "${java.util.UUID.randomUUID()}.${filename.substringAfterLast('.')}")
-                staged.copyTo(newFile, overwrite = false)
+                val newFile = Vault.storeEncrypted(ctx, staged)
                 val d = ArchiveDoc(
                     title = o.optString("title", "Dokument"),
                     category = o.optString("category", "Sonstiges"),
@@ -168,7 +173,14 @@ object BackupEngine {
                     file = newFile.name,
                     mime = o.optString("mime", "application/pdf"),
                     sha256 = hash,
-                    created = o.optLong("created", System.currentTimeMillis())
+                    created = o.optLong("created", System.currentTimeMillis()),
+                    iban = o.optString("iban"),
+                    reference = o.optString("reference"),
+                    invoiceNumber = o.optString("invoiceNumber"),
+                    recurringMonths = o.optInt("recurringMonths"),
+                    reimbursed = o.optString("reimbursed"),
+                    deductible = o.optString("deductible"),
+                    qrPayload = o.optString("qrPayload")
                 )
                 try { db.put(d); count++ } catch (t: Exception) { newFile.delete(); throw t }
             }
