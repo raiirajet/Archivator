@@ -69,7 +69,12 @@ object Vault {
         val original = validateFile(ctx, doc.file)
         require(original.isFile) { "Originaldatei fehlt" }
         if (!isEncrypted(doc)) return original
-        val ext = if (doc.mime.contains("pdf")) "pdf" else "jpg"
+        val ext = when {
+            doc.mime.contains("pdf") -> "pdf"
+            doc.mime.contains("png") -> "png"
+            doc.mime.contains("webp") -> "webp"
+            else -> "jpg"
+        }
         val targetDir = File(ctx.cacheDir, "decrypted").apply { mkdirs() }
         val temp = File(targetDir, "${UUID.randomUUID()}.$ext")
         try {
@@ -89,6 +94,7 @@ object Vault {
                     temp.outputStream().use { decrypted.copyTo(it) }
                 }
             }
+            if (doc.sha256.isNotBlank()) require(ArchiveEngine.checksum(temp) == doc.sha256) { "Dateiintegrität konnte nicht bestätigt werden" }
             return temp
         } catch (e: Exception) {
             temp.delete()
