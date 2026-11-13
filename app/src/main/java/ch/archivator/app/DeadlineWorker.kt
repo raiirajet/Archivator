@@ -23,9 +23,13 @@ class DeadlineWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         val docs = ArchiveDb(applicationContext).use { it.all() }
         val today = LocalDate.now()
         val upcoming = docs.filter { d ->
-            if (d.due.isBlank() || d.status in listOf("Bezahlt", "Erledigt")) return@filter false
-            val due = runCatching { LocalDate.parse(d.due) }.getOrNull() ?: return@filter false
-            !due.isAfter(today.plusDays(3))
+            val due = runCatching { LocalDate.parse(d.due) }.getOrNull()
+            val warranty = runCatching { LocalDate.parse(d.purchased).plusMonths(d.warrantyMonths.toLong()) }.getOrNull()
+            val dueSoon = due != null && d.status !in listOf("Bezahlt", "Erledigt") &&
+                !due.isAfter(today.plusDays(3))
+            val warrantySoon = d.warrantyMonths > 0 && warranty != null &&
+                !warranty.isBefore(today) && !warranty.isAfter(today.plusDays(30))
+            dueSoon || warrantySoon
         }
         if (upcoming.isEmpty()) return Result.success()
         val context = applicationContext
