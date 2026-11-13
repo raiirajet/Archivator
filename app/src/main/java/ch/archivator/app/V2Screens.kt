@@ -57,7 +57,7 @@ private fun recurringDate(d: ArchiveDoc, today: LocalDate): LocalDate? {
 @Composable
 private fun SmallHeadline(title: String, hint: String? = null) {
     Column {
-        Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = navy2)
+        Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
         if (hint != null) Text(hint, color = grey2, fontSize = 12.sp)
     }
 }
@@ -69,7 +69,7 @@ private fun HeroStat(label: String, value: String, icon: ImageVector, modifier: 
         Column(Modifier.padding(14.dp)) {
             Icon(icon, null, tint = navy2, modifier = Modifier.size(24.dp))
             Spacer(Modifier.height(10.dp))
-            Text(value, color = navy2, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+            Text(value, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 21.sp)
             Text(label, color = grey2, fontSize = 11.sp, lineHeight = 15.sp)
         }
     }
@@ -113,7 +113,7 @@ fun V2Dashboard(
     LazyColumn(contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(15.dp)) {
         item {
-            Text("Mein digitaler Haushalt", fontSize = 23.sp, color = navy2, fontWeight = FontWeight.Bold)
+            Text("Mein digitaler Haushalt", fontSize = 23.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
             Text("Alles Wichtige auf einen Blick", color = grey2)
         }
         item {
@@ -134,7 +134,7 @@ fun V2Dashboard(
                         color = baby2, fontSize = 13.sp)
                     Spacer(Modifier.height(16.dp))
                     Button(onClick = onScan, colors = ButtonDefaults.buttonColors(
-                        containerColor = baby2, contentColor = navy2)) {
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = navy2)) {
                         Icon(Icons.Outlined.DocumentScanner, null)
                         Spacer(Modifier.width(9.dp))
                         Text("Dokument scannen", fontWeight = FontWeight.Bold)
@@ -160,7 +160,7 @@ fun V2Dashboard(
                 else families.joinToString(" · "), Icons.Outlined.Groups) { onBrowse("Alle") }
         }
         if (insurance.isNotEmpty()) item {
-            Card(colors = CardDefaults.cardColors(containerColor = baby2),
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(18.dp)) {
                 Column(Modifier.padding(17.dp)) {
                     SmallHeadline("Krankenkassen-Cockpit", "Alle Beträge zur Kontrolle")
@@ -168,9 +168,9 @@ fun V2Dashboard(
                     Text("Eingereicht: ${swissAmount(insurance.sumOf { money(it.amount) })} CHF",
                         fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     Text("Erstattet: ${swissAmount(insurance.sumOf { money(it.reimbursed) })} CHF",
-                        color = navy2)
+                        color = MaterialTheme.colorScheme.onSurface)
                     Text("Selbstbehalt: ${swissAmount(insurance.sumOf { money(it.deductible) })} CHF",
-                        color = navy2)
+                        color = MaterialTheme.colorScheme.onSurface)
                     Text("Angaben sind manuell bearbeitbar und keine Leistungszusage.", fontSize = 11.sp, color = grey2)
                 }
             }
@@ -219,7 +219,7 @@ private fun V2DocCard(d: ArchiveDoc, onClick: () -> Unit) {
                 Text("${d.category} · ${d.person.ifBlank { "Privat" }}",
                     color = grey2, fontSize = 12.sp)
             }
-            if (d.amount.isNotBlank()) Text(d.amount, color = navy2, fontSize = 12.sp)
+            if (d.amount.isNotBlank()) Text(d.amount, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
             Icon(Icons.Outlined.ChevronRight, null, tint = grey2)
         }
     }
@@ -396,7 +396,7 @@ fun V2DocumentEditor(
                 .windowInsetsPadding(WindowInsets.statusBars).height(60.dp).padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück", tint = navy2) }
-                Text("Dokument bearbeiten", color = navy2, fontWeight = FontWeight.Bold,
+                Text("Dokument bearbeiten", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f), fontSize = 17.sp)
                 TextButton(onClick = {
                     onSave(doc.copy(title = title.ifBlank { "Dokument" }, category = category,
@@ -410,9 +410,9 @@ fun V2DocumentEditor(
                         cancellationDate = cancellationDate, policyNumber = policyNumber,
                         assetName = assetName, paidDate = paidDate,
                         reimbursedDate = reimbursedDate, note = note, ocr = ocr))
-                }) { Text("Speichern", color = navy2, fontWeight = FontWeight.Bold) }
+                }) { Text("Speichern", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) }
             }
-        }, containerColor = subtle2
+        }, containerColor = MaterialTheme.colorScheme.background
     ) { inner ->
         LazyColumn(Modifier.padding(inner), contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(11.dp)) {
@@ -497,7 +497,7 @@ fun V2DocumentEditor(
                 if (doc.qrPayload.isNotBlank()) item {
                     Surface(color = baby2, shape = RoundedCornerShape(14.dp)) {
                         Text("Schweizer QR-Rechnung erkannt. Bitte Betrag, IBAN und Referenz vor der Zahlung kontrollieren.",
-                            modifier = Modifier.padding(14.dp), color = navy2, fontSize = 12.sp)
+                            modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                     }
                 }
             }
@@ -513,7 +513,7 @@ fun V2DocumentEditor(
                 }
                 item { EditorField("Garantie (Monate)", warranty, KeyboardType.Number) { warranty = it } }
                 if (guarantee != null) item {
-                    Text("Garantieende: $guarantee", color = navy2, fontWeight = FontWeight.Bold)
+                    Text("Garantieende: $guarantee", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                 }
             }
             if (category in listOf("Versicherung", "Vertrag", "Abonnement", "Fahrzeug", "Wohnen")) {

@@ -33,6 +33,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
@@ -41,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
@@ -72,6 +74,7 @@ class MainActivity : FragmentActivity() {
     private var pdfExtractDocId: String? = null
     private var pdfExtractIndex: Int = 0
     private var autoBackupPassword: String? = null
+    private var autoBackupRevision by mutableIntStateOf(0)
     private var confirmExit by mutableStateOf(false)
     private var darkAppearance by mutableStateOf(false)
     private var homeWidgets by mutableStateOf<List<String>>(HomeWidgets.default)
@@ -163,6 +166,7 @@ class MainActivity : FragmentActivity() {
             val result = withContext(Dispatchers.IO) {
                 runCatching { AutoBackups.configure(this@MainActivity, uri, password) }
             }
+            if (result.isSuccess) autoBackupRevision++
             toast(if (result.isSuccess) "Automatische verschlüsselte Sicherungen eingerichtet"
                 else "Automatisches Backup: ${result.exceptionOrNull()?.message}")
         }
@@ -244,9 +248,15 @@ class MainActivity : FragmentActivity() {
         if (remindersEnabled) scheduleDeadlines(this)
         if (AutoBackups.enabled(this)) AutoBackups.schedule(this)
         window.statusBarColor = AndroidColor.rgb(172, 216, 246)
-        window.navigationBarColor = AndroidColor.WHITE
+        window.navigationBarColor = if (darkAppearance) AndroidColor.BLACK else AndroidColor.WHITE
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightNavigationBars = !darkAppearance
+            isAppearanceLightStatusBars = !darkAppearance
+        }
         setContent {
             MaterialTheme(colorScheme = if (darkAppearance) darkColorScheme(
+                surfaceVariant = Color(0xFF253A51),
+                onSurfaceVariant = Color(0xFFC2D0DF),
                 primary = Color(0xFFACD8F6), onPrimary = Color(0xFF082949),
                 secondary = Color(0xFFA9D6FF), surface = Color(0xFF13243A),
                 background = Color(0xFF091726), onSurface = Color.White
@@ -495,7 +505,7 @@ class MainActivity : FragmentActivity() {
             return
         }
         Scaffold(
-            containerColor = canvas,
+            containerColor = MaterialTheme.colorScheme.background,
             topBar = { BrandHeader() },
             bottomBar = {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
@@ -540,14 +550,19 @@ class MainActivity : FragmentActivity() {
                         onSection = ::openSection,
                         dark = darkAppearance,
                         onDark = {
+                            window.navigationBarColor = if (it) AndroidColor.BLACK else AndroidColor.WHITE
+                            WindowInsetsControllerCompat(window, window.decorView).apply {
+                                isAppearanceLightNavigationBars = !it
+                                isAppearanceLightStatusBars = !it
+                            }
                             darkAppearance = it
                             getPreferences(MODE_PRIVATE).edit().putBoolean("appearance_dark", it).apply()
                         },
                         widgets = homeWidgets,
-                        autoEnabled = AutoBackups.enabled(this@MainActivity),
+                        autoEnabled = autoBackupRevision >= 0 && AutoBackups.enabled(this@MainActivity),
                         autoLast = AutoBackups.lastResult(this@MainActivity),
                         onAutoBackup = { autoBackupPassword = it; autoBackupPicker.launch(null) },
-                        onAutoDisable = { AutoBackups.disable(this@MainActivity); toast("Automatisches Backup deaktiviert") },
+                        onAutoDisable = { AutoBackups.disable(this@MainActivity); autoBackupRevision++; toast("Automatisches Backup deaktiviert") },
                         onWidgets = {
                             homeWidgets = it
                             HomeWidgets.save(this@MainActivity, it)
@@ -594,7 +609,10 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 private fun BrandHeader() {
-    Column(Modifier.fillMaxWidth().background(Color(0xFFACD8F6)).windowInsetsPadding(WindowInsets.statusBars)) {
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.25f
+    val header = if (isDark) Color(0xFF142B44) else Color(0xFFACD8F6)
+    val foreground = if (isDark) Color.White else forest
+    Column(Modifier.fillMaxWidth().background(header).windowInsetsPadding(WindowInsets.statusBars)) {
         Row(
             Modifier.fillMaxWidth().height(66.dp).padding(horizontal = 22.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -605,11 +623,11 @@ private fun BrandHeader() {
             }
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("Archivator", fontWeight = FontWeight.Bold, fontSize = 21.sp, color = forest)
-                Text("Dein digitaler Haushalt", fontSize = 11.sp, color = forest.copy(alpha = .78f))
+                Text("Archivator", fontWeight = FontWeight.Bold, fontSize = 21.sp, color = foreground)
+                Text("Dein digitaler Haushalt", fontSize = 11.sp, color = foreground.copy(alpha = .78f))
             }
             Spacer(Modifier.weight(1f))
-            Icon(Icons.Outlined.VerifiedUser, null, tint = Color.White.copy(alpha = .75f))
+            Icon(Icons.Outlined.VerifiedUser, null, tint = foreground.copy(alpha = .75f))
         }
     }
 }
@@ -686,7 +704,7 @@ private fun Dashboard(docs: List<ArchiveDoc>, onOpen: (ArchiveDoc) -> Unit, onSc
 
 @Composable
 private fun StatCard(label: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier) {
-    Card(modifier = modifier, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+    Card(modifier = modifier, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(12.dp)) {
             Icon(icon, null, tint = forest, modifier = Modifier.size(23.dp))
             Spacer(Modifier.height(10.dp))
@@ -773,7 +791,7 @@ private fun Deadlines(docs: List<ArchiveDoc>, onOpen: (ArchiveDoc) -> Unit) {
         if (due.isEmpty()) item { EmptyState("Keine offenen Fristen", "Hinterlege bei Dokumenten ein Fälligkeitsdatum.") }
         else items(due) { (d, date) ->
             val days = java.time.temporal.ChronoUnit.DAYS.between(today, date)
-            Card(onClick = { onOpen(d) }, colors = CardDefaults.cardColors(containerColor = Color.White),
+            Card(onClick = { onOpen(d) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp)) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Event, null, tint = if (days < 0) coral else forest)
@@ -969,7 +987,7 @@ private fun SettingsPage(
             Text("Privat, sicher und ohne Benutzerkonto", color = muted)
         }
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.fillMaxWidth().padding(17.dp)) {
                     Text("Mein Archiv", fontWeight = FontWeight.Bold)
                     Text("$count Dokumente · nur auf diesem Gerät", color = muted, fontSize = 13.sp)
@@ -980,7 +998,7 @@ private fun SettingsPage(
             }
         }
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Fingerprint, null, tint = forest)

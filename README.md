@@ -1,60 +1,112 @@
-# Archivator 2.0 – dein digitaler Haushalt
+# Archivator – digitaler Haushaltsmanager (Android)
 
-Native Android-App in Kotlin / Jetpack Compose, offline-first. Kein Konto und keine Firebase-Anbindung notwendig.
+Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.0-beta1**.
+Alle Kernfunktionen sind offline nutzbar; ein Konto oder eine Firebase-Anbindung ist nicht erforderlich.
 
-## Funktionen
+## Neu seit 2.0
 
-- Modernes babyblaues Dashboard mit Schnellscan, Rechnungen, Krankenkasse und Garantiefristen.
-- Google-ML-Kit-Dokumentenscanner mit mehrseitigen PDFs, automatischem Zuschnitt und Kamera-Fallback.
-- Lokale OCR, automatische heuristische Dokumentkategorie, Betrag, Händler, Rechnungsnummer, Datum und Fälligkeit.
-- Schweizer QR-Rechnungen: QR-Code offline erkennen, QR-IBAN/IBAN, Referenz und Betrag übernehmen. **Kein Zahlungsauftrag** – Daten vor Nutzung kontrollieren.
-- Volldurchsuchbares Archiv mit Mehrwort-Suche über OCR, Namen, Beträge, IBAN, Referenz, Notizen und Tags; Filter nach Typ, Status und Haushaltsmitglied.
-- Rechnungen: Offen/Bezahlt, wiederkehrende Fälligkeit (in Monaten) und Erinnerungen.
-- Garantien: Kaufdatum, Dauer, berechnetes Ende und Hinweis vor Ablauf.
-- Krankenkassen-Cockpit: Belegstatus, Erstattungsbeträge, Selbstbehalt/Franchise.
-- PDF-/Bildvorschau; PDF-Seiten drehen und umsortieren. **Achtung:** Beim PDF-Speichern werden die Seiten als Bilder neu erzeugt. Ursprüngliche Vektor-/Textschichten können verloren gehen; vorher Backup erstellen.
-- Verschlüsselte Dokumentdateien (Android Keystore / AES-256-GCM) und passwortgeschützte Backups (AES-256-GCM / PBKDF2-HMAC-SHA256). Bestehende v1-Dateien werden nach der Aktualisierung in-place migriert.
-- Biometrische App-Sperre, lokale Datenbank, kein Tracking.
-- Datei-Import aus Android-Dateiauswahl und Share-Menü.
+### Navigation und Erscheinungsbild
+- Android-Zurück-Geste/-Taste schliesst **nicht** die App, sondern geht von Vorschau zu Dokument,
+  zurück zum Bereich und erst dann zur Startseite; auf der Startseite wird nachgefragt.
+- Babyblaues Kamera-Dokument-Icon, unterer Scan-Schnellzugriff und eigenes Dunkel-Design.
+- Personalisierbare Startseite mit ein-/ausblendbaren und sortierbaren Kacheln.
 
-## Datenschutz
+### Archiv und Dokumente
+- Dokumente per Smart-Scanner, Kamera oder PDF-/Bild-Dateiauswahl aufnehmen.
+- Mehrere PDF-/Bild-Anhänge auch über `ACTION_SEND_MULTIPLE` aus anderen Apps importieren.
+- OCR lokal mit ML Kit; für Rechnungen heuristische Kategorie, Händler, Datum, Betrag, Referenz.
+- Kategorien: Rechnung, Quittung, Garantie, Krankenkasse, Versicherung, Vertrag, Fahrzeug,
+  Wohnen, Abonnement, Bedienungsanleitung, Steuern.
+- Händlerbezogene Kategorie-Vorschläge merken sich nachträgliche Korrekturen.
+- FTS4-Volltextindex für schnelle Offline-Suche, kombinierbar mit Person-, Kategorie- und Statusfiltern.
+- SHA-256-Erkennung identischer Dateien, zusätzlich vorsichtige Warnung bei ähnlichen Dokumenten.
+- Dokumente über eine gemeinsame Vorgangskennung verknüpfen.
+- Exportdateinamen mit Datum, Händler, Betrag und kurzer Dokumentkennung.
+- Vorschaubilder von Dokumenten im Archiv.
 
-Dokumentdateien liegen nur verschlüsselt in der privaten App-Ablage. Dateischlüssel sind im lokalen Android Keystore gespeichert. Metadaten und OCR-Texte liegen weiterhin in einer lokalen SQLite-Datei; sie profitieren von der Gerätespeicherverschlüsselung, sind aber **nicht separat feldweise verschlüsselt**. PDF-Vorschau und Teilen erfordern temporäre Klartextdateien im privaten Cache, der beim nächsten App-Start geleert wird. Ein entsperrtes oder kompromittiertes Gerät kann diese Inhalte dennoch offenlegen.
+### PDF-Werkzeuge
+- PDF- und Bildvorschau mit Zoom.
+- PDF-Seiten in anderer Reihenfolge speichern, um 90 Grad drehen, entfernen oder als separates PDF exportieren.
+- Vorhandene PDFs zusammenführen.
+- PDFBox-Android dient zur nicht-rasterisierenden Seitenbearbeitung; PDF-Text- und
+  Vektorinhalte bleiben soweit durch PDFBox unterstützt erhalten.
+- Bis zu vier verschlüsselte frühere Dateiversionen werden lokal aufbewahrt, sofern die
+  Datei über die PDF-Werkzeuge ersetzt wurde. Sie können wiederhergestellt werden.
+- Digitale Signaturen können durch PDF-Bearbeitung ungültig werden.
 
-Backups sind über ein eigenes Passwort verschlüsselt. Für eine Wiederherstellung auf einem anderen Gerät das Backup UND das Passwort aufbewahren; der Android-Keystore-Schlüssel allein lässt sich nicht exportieren. Die Originaldateien werden beim Migrationsschritt erst nach erfolgreicher Verschlüsselung und Datenbankaktualisierung gelöscht. Trotzdem vor Updates ein Backup sichern.
+### Haushaltsfunktionen
+- Rechnungen: Status, IBAN/QR-IBAN, Referenz, Betrag, Fälligkeit, Wiederholung.
+- Garantien: Kaufdatum, Dauer, Ablauf und Fristenhinweise.
+- Krankenkassenbelege: Betrag, Erstattung, Selbstbehalt, Bearbeitungsstatus.
+- Versicherungspolicen, Fahrzeug-/Haushaltsdokumente, Vertragsnummern und Kündigungsfristen.
+- Finanz-Jahresübersicht mit Monatswerten und CSV-Export; Werte sind erfasste Belegbeträge,
+  keine mit dem Bankkonto abgeglichenen echten Umsätze.
+- Steuerordner: Dokumente manuell markieren, nach Jahr sammeln, als ZIP plus CSV exportieren.
+- Chronologische Ereignisansicht für Dokumentdatum, Kauf, Fälligkeit und Garantie.
+- „Archivator fragen“: lokale heuristische Dokumentfrage-Suche, **kein generatives KI-Modell**.
 
-OCR und KI-Vorschläge sind heuristisch und können falsch sein. Die QR-Daten entsprechen einem strukturierten Swiss Payments Code, sind aber keine Bankprüfung und dürfen nicht blind übernommen werden. Weder E-Mail-Import noch echte Bankzahlungen sind integriert.
+### Sicherheit
+- Dokumentdateien AES-256-GCM-verschlüsselt im privaten App-Speicher mit Android-Keystore-Schlüssel.
+- Geschützte Backups: portable passwortverschlüsselte ARC-Dateien mit PBKDF2 + AES-256-GCM.
+- Automatische tägliche verschlüsselte Backups in einen vom Benutzer gewählten Android-Dokumentordner,
+  optional über einen Cloud-Dateianbieter, der Androids Dateiauswahl unterstützt.
+- Backup-Passwort wird nach ausdrücklicher Freigabe verschlüsselt durch Android Keystore
+  geschützt auf dem Gerät hinterlegt; zur Wiederherstellung auf einem anderen Gerät
+  **muss das Passwort separat aufbewahrt werden**.
+- Biometrische bzw. gerätebasierte Entsperrung und Wiederverriegelung nach Verlassen der App.
+- Sperrbildschirm-Benachrichtigungen zeigen keine vertraulichen Dokumenttitel.
+- Keine Werbe-SDKs, keine Kontopflicht und keine automatische Netzwerkübertragung von Dokumenten.
 
-## Debug-APK über GitHub Actions
+**Datenschutzgrenze:** Die Dokumentdateien sind einzeln verschlüsselt. Die lokale
+SQLite-Datenbank mit Metadaten und OCR-Suchindex ist **nicht separat SQLCipher-verschlüsselt**;
+ihr Schutz beruht auf dem privaten Android-App-Speicher und der Gerätespeicherverschlüsselung.
+Auch temporäre Klartextkopien im privaten Cache sind beim Teilen/Anzeigen erforderlich.
+Sie werden bei einem App-Neustart entfernt.
 
-1. Reiter **Actions** > **Android APK** auf den Entwicklungszweig wechseln.
-2. Erfolgreichen Build öffnen > **Artifacts** > **Archivator-Android-APK** herunterladen.
-3. ZIP entpacken und `app-debug.apk` auf Android installieren.
+**Exporthinweis:** Steuer-ZIP und Finanz-CSV sind im Klartext. Nur die
+mit Passwort erzeugten ARC-Backup-Dateien sind zusätzlich verschlüsselt.
 
-**Achtung:** GitHub-Runner erzeugen Debug-Builds eventuell mit unterschiedlichen Signaturschlüsseln. Ein Debug-APK muss nicht über ältere Debug-Installationen installierbar sein. Alte App **nicht deinstallieren, bevor die Wiederherstellbarkeit eines verschlüsselten Backups geprüft ist**.
+## APK bauen
 
-## Dauerhaft signierte Releases vorbereiten
+Ein Push auf `feature/archivator-v3` startet GitHub Actions.
+Der Workflow führt `gradle :app:testDebugUnitTest :app:assembleDebug` aus.
+Nach einem erfolgreichen Lauf: **Actions → Android APK → Artifacts → Archivator-Android-APK**.
 
-Damit Android APK-Updates später dieselbe Signatur besitzen, muss **ein dauerhaft gesicherter privater Keystore** verwendet werden. Die CI kann optional `app-release.apk` bauen, wenn folgende Repository Secrets gesetzt sind:
+Debug-APKs sind nicht für die öffentliche Verteilung bestimmt und werden auf
+unterschiedlichen GitHub-Runnern möglicherweise unterschiedlich signiert.
+**Alte App-Version vor einem sicher geprüften Backup nicht deinstallieren.**
 
-- `ARCHIVATOR_KEYSTORE_B64`: Base64-kodierter Inhalt des privaten Release-Keystores
-- `ARCHIVATOR_STORE_PASSWORD`: Store-Passwort
-- `ARCHIVATOR_KEY_ALIAS`: Alias
-- `ARCHIVATOR_KEY_PASSWORD`: Schlüssel-Passwort
+Für stabil signierte Releases bitte einen eigenen langfristig gesicherten
+Keystore mit den vorhandenen Repository-Secrets
+`ARCHIVATOR_KEYSTORE_B64`, `ARCHIVATOR_STORE_PASSWORD`,
+`ARCHIVATOR_KEY_ALIAS`, `ARCHIVATOR_KEY_PASSWORD` konfigurieren.
+Der Keystore darf nicht im Repository landen.
 
-Der Keystore wird nicht im Repository eingecheckt. Sein Verlust verhindert spätere updates mit derselben Paketkennung. Beispiel für die Erstellung auf einem vertrauenswürdigen eigenen Rechner:
+## Empfohlene Gerätetests vor Produktiveinsatz
 
-```bash
-keytool -genkeypair -v -keystore archivator-release.jks -alias archivator -keyalg RSA -keysize 3072 -validity 10000
-base64 -w0 archivator-release.jks
-```
+1. Neuinstallation Android 8/12/15/16, Darstellung in Hell und Dunkel.
+2. Mehrfach zwischen Startseite, Archiv, Fristen und Einstellungen wechseln und
+   per Zurück-Wischgeste jede Ebene einzeln verlassen; zu Hause Schliessdialog prüfen.
+3. Mehrseitige PDFs, einzelne Bilder, Kamerafotos und Dateien aus Mail/Dateimanager importieren.
+4. OCR-Ergebnisse korrigieren, anschliessend in der Volltextsuche wiederfinden.
+5. Dieselbe Quittung zweimal scannen; Duplikathinweis kontrollieren.
+6. Swiss-QR-Rechnung importieren: Betrag, QR-IBAN und Referenz manuell gegen Original abgleichen.
+7. PDF-Seiten umsortieren, drehen, entfernen, zusammenführen und ältere Version wiederherstellen.
+8. Garantie- und Zahlungsfristen mit Datum erfassen; Benachrichtigungen prüfen.
+9. Verschlüsseltes Backup erstellen, Passwort absichtlich falsch und richtig testen;
+   testweise auf einem **zweiten Gerät** wiederherstellen.
+10. Automatisches Backup nur nach expliziter Auswahl eines beschreibbaren Ordners aktivieren.
+11. Steuer-ZIP und Finanz-CSV auf korrekte Inhalte prüfen.
+12. Vor jeder Aktualisierung mit bestehenden echten Daten zuerst ein verifiziertes Backup erstellen.
 
-Füge den Base64-Wert als erstes Secret hinzu und sichere die Keystore-Datei und Passwörter ausserhalb von GitHub an zwei geschützten Orten. Bei konfigurierten Secrets erstellt der Workflow zusätzlich das Artefakt `Archivator-SIGNED-RELEASE-APK`. Die Veröffentlichung eines Releases erfolgt nicht automatisch. Eine Debug-Installation kann wegen unterschiedlicher Signatur weiterhin nicht auf diese Release-Installation wechseln; sichere vorher deine Daten.
+## Noch nicht als produktionsreif auszugeben
 
-## Tech
+- Keine vollständige bidirektionale Cloud-Synchronisation oder geräteübergreifende
+  Mehrbenutzer-Freigabe; Synchronisation erfolgt derzeit nur über verschlüsselte Sicherungen.
+- Kein On-Device-LLM und keine generative KI; die lokale Frage-Suche nutzt Regeln.
+- Keine direkte Bankanbindung, Zahlungsfreigabe oder vollständige E-Mail-Postfach-Synchronisation.
+- Keine separate Verschlüsselung der SQL-Suchmetadaten.
+- Automatische Klassifikation ist heuristisch und muss kontrolliert werden.
+- GitHub CI testet Compiler und Unit-Tests, nicht Kamera, Biometrie und Gerätewechsel.
 
-JDK 17, Android SDK 35, Gradle 8.10.2, Android Gradle Plugin 8.7.2, Kotlin 2.1.21, Jetpack Compose, WorkManager, Android Keystore und Google ML Kit. Lokal mit `gradle :app:testDebugUnitTest :app:assembleDebug` bauen.
-
-### Offene Grenzen
-
-Die Garantie- und Rechnungsfristen sind lokale Erinnerungen, keine verbindlichen Zahlungstermine. Der Wiederholungsturnus verwaltet anstehende Perioden; keine automatische Bankzahlung. Familienordner sind lokal – keine geräteübergreifende Familienfreigabe. Die QR-Decoderlogik erkennt strukturierte QR-Rechnungen in Bildern und den ersten fünf PDF-Seiten. Bei schlechten Scans kann die Erkennung versagen. Für eine produktive Veröffentlichung sind zusätzliche Geräte-, Sicherheits- und Migrationstests nötig.
+`main` und frühere Versionen bleiben unverändert, bis eine ausdrücklich gewünschte Freigabe erfolgt.

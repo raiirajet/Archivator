@@ -190,7 +190,7 @@ fun PdfPreviewScreen(ctx: Context, doc: ArchiveDoc, allDocs: List<ArchiveDoc>,
     }
     Scaffold(
         topBar = {
-            Row(Modifier.fillMaxWidth().background(Color(0xFFACD8F6))
+            Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
                 .windowInsetsPadding(WindowInsets.statusBars).height(62.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück") }
