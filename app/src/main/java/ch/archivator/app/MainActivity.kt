@@ -53,11 +53,11 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private val forest = Color(0xFF145C4F)
-private val mint = Color(0xFFE8F5EC)
-private val ink = Color(0xFF18362E)
+private val forest = Color(0xFF113C69)
+private val mint = Color(0xFFDFEFFF)
+private val ink = Color(0xFF113C69)
 private val muted = Color(0xFF657A73)
-private val canvas = Color(0xFFF5F8F6)
+private val canvas = Color(0xFFF3F8FF)
 private val coral = Color(0xFFE27B52)
 
 class MainActivity : FragmentActivity() {
@@ -65,6 +65,8 @@ class MainActivity : FragmentActivity() {
     private var docs by mutableStateOf<List<ArchiveDoc>>(emptyList())
     private var tab by mutableIntStateOf(0)
     private var editing by mutableStateOf<String?>(null)
+    private var previewDoc by mutableStateOf<String?>(null)
+    private var initialArchiveCategory by mutableStateOf("Alle")
     private var locked by mutableStateOf(false)
     private var fingerprintEnabled by mutableStateOf(false)
     private var remindersEnabled by mutableStateOf(true)
@@ -135,9 +137,19 @@ class MainActivity : FragmentActivity() {
         fingerprintEnabled = getPreferences(MODE_PRIVATE).getBoolean("biometric", false)
         remindersEnabled = getPreferences(MODE_PRIVATE).getBoolean("reminders", true)
         locked = fingerprintEnabled
+        Vault.purgeCache(this)
         refresh()
+        lifecycleScope.launch {
+            importBusy = true
+            val migration = withContext(Dispatchers.IO) {
+                runCatching { Vault.migrate(this@MainActivity, database) }
+            }
+            importBusy = false
+            migration.onFailure { toast("Verschlüsselungsmigration: ${it.message}") }
+            refresh()
+        }
         if (remindersEnabled) scheduleDeadlines(this)
-        window.statusBarColor = AndroidColor.rgb(20, 92, 79)
+        window.statusBarColor = AndroidColor.rgb(172, 216, 246)
         window.navigationBarColor = AndroidColor.WHITE
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(
@@ -167,7 +179,6 @@ class MainActivity : FragmentActivity() {
             refresh()
             if (warning != null) toast(warning)
             if (doc != null) editing = doc.id
-            else if (warning != null) toast(warning)
         }
     }
 
@@ -195,18 +206,26 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun openFile(d: ArchiveDoc, share: Boolean) {
-        val file = File(ArchiveEngine.docsDir(this), d.file)
-        if (!file.isFile) { toast("Datei nicht gefunden"); return }
-        val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
-        val intent = if (share) Intent(Intent.ACTION_SEND).apply {
-            type = d.mime; putExtra(Intent.EXTRA_STREAM, uri)
-        } else Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, d.mime)
+        lifecycleScope.launch {
+            val fileResult = withContext(Dispatchers.IO) {
+                runCatching { Vault.plaintext(this@MainActivity, d) }
+            }
+            fileResult.onFailure { toast("Dokument kann nicht geöffnet werden: ${it.message}") }
+            val file = fileResult.getOrNull() ?: return@launch
+            val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", file)
+            val viewIntent = if (share) Intent(Intent.ACTION_SEND).apply {
+                type = d.mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+            } else Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, d.mime)
+            }
+            viewIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            try {
+                startActivity(if (share) Intent.createChooser(viewIntent, "Dokument teilen") else viewIntent)
+            } catch (_: ActivityNotFoundException) {
+                toast("Keine App zum Öffnen dieses Dateityps gefunden")
+            }
         }
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        try {
-            startActivity(if (share) Intent.createChooser(intent, "Dokument teilen") else intent)
-        } catch (_: ActivityNotFoundException) { toast("Keine App zum Öffnen dieses Dateityps gefunden") }
     }
 
     private fun deleteDoc(d: ArchiveDoc) {
@@ -267,15 +286,22 @@ class MainActivity : FragmentActivity() {
     @Composable
     private fun AppScreen() {
         var showImport by remember { mutableStateOf(false) }
+        val preview = previewDoc?.let { id -> docs.firstOrNull { it.id == id } }
+        if (preview != null) {
+            PdfPreviewScreen(this, preview, onBack = { previewDoc = null },
+                onUpdated = { previewDoc = null; refresh(); toast("PDF aktualisiert") })
+            return
+        }
         val selected = editing?.let { id -> docs.firstOrNull { it.id == id } }
         if (selected != null) {
-            DocumentEditor(
+            V2DocumentEditor(
                 doc = selected,
                 onBack = { editing = null },
                 onSave = { database.put(it); refresh(); editing = null; toast("Dokument gespeichert") },
                 onDelete = { deleteDoc(selected) },
                 onOpen = { openFile(selected, false) },
                 onShare = { openFile(selected, true) },
+                onPreview = { previewDoc = selected.id },
                 onPickDate = { initial, callback -> chooseDate(initial, callback) }
             )
             return
@@ -304,9 +330,11 @@ class MainActivity : FragmentActivity() {
         ) { inner ->
             Box(Modifier.padding(inner).fillMaxSize()) {
                 when (tab) {
-                    0 -> Dashboard(docs, onOpen = { editing = it.id }, onScan = { scan() }, onImport = { showImport = true })
-                    1 -> DocumentList(docs, onOpen = { editing = it.id })
-                    2 -> Deadlines(docs, onOpen = { editing = it.id })
+                    0 -> V2Dashboard(docs, onOpen = { editing = it.id }, onScan = { scan() },
+                        onBrowse = { initialArchiveCategory = it; tab = 1 })
+                    1 -> V2DocumentList(docs, initialCategory = initialArchiveCategory,
+                        onOpen = { editing = it.id })
+                    2 -> V2Deadlines(docs, onOpen = { editing = it.id })
                     3 -> SettingsPage(
                         docs.size, fingerprintEnabled, remindersEnabled,
                         onFingerprint = ::setBiometric, onReminder = ::setReminders,
@@ -355,7 +383,7 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 private fun BrandHeader() {
-    Column(Modifier.fillMaxWidth().background(forest).windowInsetsPadding(WindowInsets.statusBars)) {
+    Column(Modifier.fillMaxWidth().background(Color(0xFFACD8F6)).windowInsetsPadding(WindowInsets.statusBars)) {
         Row(
             Modifier.fillMaxWidth().height(66.dp).padding(horizontal = 22.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -366,8 +394,8 @@ private fun BrandHeader() {
             }
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("Archivator", fontWeight = FontWeight.Bold, fontSize = 21.sp, color = Color.White)
-                Text("Dein digitaler Haushalt", fontSize = 11.sp, color = Color.White.copy(alpha = .78f))
+                Text("Archivator", fontWeight = FontWeight.Bold, fontSize = 21.sp, color = forest)
+                Text("Dein digitaler Haushalt", fontSize = 11.sp, color = forest.copy(alpha = .78f))
             }
             Spacer(Modifier.weight(1f))
             Icon(Icons.Outlined.VerifiedUser, null, tint = Color.White.copy(alpha = .75f))
