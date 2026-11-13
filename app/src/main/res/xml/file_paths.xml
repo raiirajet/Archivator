@@ -2,4 +2,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="documents" path="docs/" />
     <cache-path name="camera" path="camera/" />
+    <cache-path name="decrypted" path="decrypted/" />
 </paths>
