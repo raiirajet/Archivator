@@ -41,12 +41,12 @@ data class ArchiveDoc(
     val reimbursedDate: String = ""
 )
 
-val categories = listOf("Alle", "Rechnung", "Quittung", "Garantie", "Krankenkasse",
+val categories = listOf("Alle", "Scan", "Rechnung", "Quittung", "Garantie", "Krankenkasse",
     "Versicherung", "Vertrag", "Fahrzeug", "Wohnen", "Abonnement",
     "Bedienungsanleitung", "Steuern", "Sonstiges")
 val states = listOf("Offen", "Bezahlt", "Eingereicht", "In Bearbeitung",
     "Teilweise erstattet", "Erledigt")
-val categoryIcons = mapOf("Rechnung" to "🧾", "Quittung" to "🛍", "Garantie" to "🛡",
+val categoryIcons = mapOf("Scan" to "📷", "Rechnung" to "🧾", "Quittung" to "🛍", "Garantie" to "🛡",
     "Krankenkasse" to "♡", "Versicherung" to "🛡", "Vertrag" to "✍",
     "Fahrzeug" to "🚗", "Wohnen" to "🏠", "Abonnement" to "🔁",
     "Bedienungsanleitung" to "📘", "Steuern" to "📁", "Sonstiges" to "📄")
