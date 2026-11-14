@@ -11,6 +11,11 @@ class ArchiveHeuristicsTest {
         assertEquals("2026-12-24", guess.due)
     }
 
+    @Test fun uncategorizedTextIsSavedUnderScan() {
+        assertEquals("Scan", guessFromText("Ideen und Notizen ohne Dokumenttyp").category)
+        assertEquals("Scan", guessFromText("").category)
+    }
+
     @Test fun recognizesInsurance() {
         val guess = guessFromText("Krankenkasse\nLeistungsabrechnung\nBetrag CHF 87.20")
         assertEquals("Krankenkasse", guess.category)
