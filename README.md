@@ -1,20 +1,23 @@
 # Archivator – digitaler Haushaltsmanager (Android)
 
-Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.1-beta2**.
+Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.2-beta3**.
 Alle Kernfunktionen sind offline nutzbar; ein Konto oder eine Firebase-Anbindung ist nicht erforderlich.
 
 ## Neu seit 2.0
 
 ### Startseite: neue Kachelübersicht
-- Kategorien als kompakte Kacheln in **zwei oder drei Spalten**; die Spaltenzahl lässt sich direkt auf der Startseite umschalten und bleibt gespeichert.
-- **Langes Drücken und Ziehen** verschiebt Kacheln auf ein sichtbares Zielfeld. Die Reihenfolge wird sofort im Geräteprofil gespeichert; in den Einstellungen gibt es ergänzend Pfeiltasten zur Sortierung.
+- Kategorien als Kacheln in **zwei bis sechs Spalten**; mit zwei Fingern auseinanderziehen zum Vergrössern (weniger Spalten), zusammenziehen zum Verkleinern (mehr Spalten). Die Spaltenzahl bleibt gespeichert. Es gibt keine separaten 2-/3-Raster-Schalter mehr.
+- **Langes Drücken und Ziehen** verschiebt Kacheln auf ein sichtbares Zielfeld. Die Griffpunkte mit sechs Punkten wurden entfernt; Verschieben funktioniert weiterhin an der ganzen Kachel. Die Reihenfolge wird sofort gespeichert, ergänzend gibt es in den Einstellungen Pfeiltasten.
+- Die neue **«Scan»**-Kachel öffnet alle unzugeordneten Dokumente. Neue Dokumente, deren Kategorie nicht erkannt wird, werden unter **«Scan»** gespeichert. Vorhandene «Sonstiges»-Dokumente bleiben unverändert. Die neue Kachel wird bestehenden Installationen einmalig hinzugefügt.
 - Die hellblaue Karte „Ein Scan. Alles im Griff.“ nutzt nun die vollständige verfügbare Displaybreite. Der Scan-Button ist kontrastreich weiss auf Dunkelblau.
 - Kennzahlen und bisherige Funktionen bleiben erhalten; zuletzt archivierte Dokumente werden weiterhin angezeigt.
 
 ### Navigation und Erscheinungsbild
 - Android-Zurück-Geste/-Taste schliesst **nicht** die App, sondern geht von Vorschau zu Dokument,
   zurück zum Bereich und erst dann zur Startseite; auf der Startseite wird nachgefragt.
-- Babyblaues Kamera-Dokument-Icon, unterer Scan-Schnellzugriff und eigenes Dunkel-Design.
+- Babyblaues Kamera-Dokument-Icon, unterer Scan-Schnellzugriff und **tiefschwarzer Hintergrund** im Dunkel-Design.
+- Eine **Einführung beim ersten Start** erklärt die Bedienung und alle wesentlichen Funktionen. Unter Einstellungen → **«App Funktion»** kann die komplette Anleitung jederzeit erneut geöffnet werden.
+- Bei aktivierter App-Sperre löst die reguläre Rückkehr aus dem externen Dokumentenscanner keine sofortige zweite Entsperrung aus. Wenn der Scanner mehr als 30 Minuten offen ist, wird aus Sicherheitsgründen erneut gesperrt.
 - Personalisierbare Startseite mit ein-/ausblendbaren und sortierbaren Kacheln.
 
 ### Archiv und Dokumente
@@ -22,7 +25,7 @@ Alle Kernfunktionen sind offline nutzbar; ein Konto oder eine Firebase-Anbindung
 - Mehrere PDF-/Bild-Anhänge auch über `ACTION_SEND_MULTIPLE` aus anderen Apps importieren.
 - OCR lokal mit ML Kit; für Rechnungen heuristische Kategorie, Händler, Datum, Betrag, Referenz.
 - Kategorien: Rechnung, Quittung, Garantie, Krankenkasse, Versicherung, Vertrag, Fahrzeug,
-  Wohnen, Abonnement, Bedienungsanleitung, Steuern.
+  Wohnen, Abonnement, Bedienungsanleitung, Steuern, Scan (unzugeordnet), Sonstiges.
 - Händlerbezogene Kategorie-Vorschläge merken sich nachträgliche Korrekturen.
 - FTS4-Volltextindex für schnelle Offline-Suche, kombinierbar mit Person-, Kategorie- und Statusfiltern.
 - SHA-256-Erkennung identischer Dateien, zusätzlich vorsichtige Warnung bei ähnlichen Dokumenten.
@@ -90,8 +93,9 @@ Der Keystore darf nicht im Repository landen.
 
 ## Empfohlene Gerätetests vor Produktiveinsatz
 
-1. Neuinstallation Android 8/12/15/16, Darstellung in Hell und Dunkel.
-2. Mehrfach zwischen Startseite, Archiv, Fristen und Einstellungen wechseln und
+1. Neuinstallation Android 8/12/15/16, Einführung, Darstellung in Hell und tiefem Schwarz.
+2. Raster mit zwei Fingern auf 2, 3, 4, 5, 6 Spalten verändern; lange drücken und sortieren; «Scan» testen. Mit App-Sperre einen mehrseitigen Scan durchführen, ohne zweite Entsperrung.
+3. Mehrfach zwischen Startseite, Archiv, Fristen und Einstellungen wechseln und
    per Zurück-Wischgeste jede Ebene einzeln verlassen; zu Hause Schliessdialog prüfen.
 3. Mehrseitige PDFs, einzelne Bilder, Kamerafotos und Dateien aus Mail/Dateimanager importieren.
 4. OCR-Ergebnisse korrigieren, anschliessend in der Volltextsuche wiederfinden.
