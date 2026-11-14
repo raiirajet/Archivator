@@ -185,11 +185,11 @@ object CategoryMemory {
         key(merchant)?.let {
             ctx.getSharedPreferences("archive-category-memory", Context.MODE_PRIVATE)
                 .getString(it, null)
-        }?.takeIf { it in categories && it != "Sonstiges" && it != "Alle" }
+        }?.takeIf { it in categories && it != "Sonstiges" && it != "Alle" && it != "Scan" }
 
     fun remember(ctx: Context, doc: ArchiveDoc) {
         val id = key(doc.merchant) ?: return
-        if (doc.category !in categories || doc.category in listOf("Alle", "Sonstiges")) return
+        if (doc.category !in categories || doc.category in listOf("Alle", "Sonstiges", "Scan")) return
         ctx.getSharedPreferences("archive-category-memory", Context.MODE_PRIVATE)
             .edit().putString(id, doc.category).apply()
     }
