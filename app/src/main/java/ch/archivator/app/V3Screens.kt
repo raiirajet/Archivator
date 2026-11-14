@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -53,23 +54,34 @@ object V3Sections {
 }
 
 object HomeWidgets {
-    val default = listOf("Rechnungen", "Garantien", "Krankenkasse", "Familienordner", "Finanzen", "Versicherungen")
+    val default = listOf("Scan", "Rechnungen", "Garantien", "Krankenkasse", "Familienordner", "Finanzen", "Versicherungen")
     val all = default + listOf("Fahrzeug", "Haushalt", "Steuern", "Abonnements", "Zeitachse", "Letzte Dokumente")
     private const val key = "home_widgets"
     private const val columnsKey = "home_columns"
 
     fun columns(ctx: Context): Int =
         ctx.getSharedPreferences("archivator-dashboard", Context.MODE_PRIVATE)
-            .getInt(columnsKey, 2).coerceIn(2, 3)
+            .getInt(columnsKey, 2).coerceIn(2, 6)
 
     fun saveColumns(ctx: Context, columns: Int) {
         ctx.getSharedPreferences("archivator-dashboard", Context.MODE_PRIVATE)
-            .edit().putInt(columnsKey, columns.coerceIn(2, 3)).apply()
+            .edit().putInt(columnsKey, columns.coerceIn(2, 6)).apply()
     }
 
     fun load(ctx: Context): List<String> {
-        val raw = ctx.getSharedPreferences("archivator-dashboard", Context.MODE_PRIVATE).getString(key, null)
-        return if (raw == null) default else raw.split("|").filter { it in all }.distinct()
+        val prefs = ctx.getSharedPreferences("archivator-dashboard", Context.MODE_PRIVATE)
+        val raw = prefs.getString(key, null)
+        if (raw == null) {
+            prefs.edit().putBoolean("scan_tile_migrated_v1", true).apply()
+            return default
+        }
+        val saved = raw.split("|").filter { it in all }.distinct()
+        if (prefs.getBoolean("scan_tile_migrated_v1", false)) return saved
+        // Add the new Scan tile once for existing installations; later hiding it remains respected.
+        val migrated = (listOf("Scan") + saved).distinct()
+        prefs.edit().putString(key, migrated.joinToString("|"))
+            .putBoolean("scan_tile_migrated_v1", true).apply()
+        return migrated
     }
     fun save(ctx: Context, values: List<String>) {
         ctx.getSharedPreferences("archivator-dashboard", Context.MODE_PRIVATE).edit()
@@ -151,54 +163,49 @@ private fun DashboardTile(
     label: String,
     detail: String,
     icon: ImageVector,
-    compact: Boolean,
+    columns: Int,
     isDragging: Boolean,
     isDropTarget: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val surface = MaterialTheme.colorScheme.surface
+    val tiny = columns >= 5
+    val dense = columns >= 4
     val foreground = MaterialTheme.colorScheme.onSurface
     val main = MaterialTheme.colorScheme.primary
+    val height = when {
+        tiny -> 88.dp
+        dense -> 112.dp
+        columns == 3 -> 126.dp
+        else -> 142.dp
+    }
     Surface(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().height(if (compact) 126.dp else 142.dp),
-        shape = RoundedCornerShape(19.dp),
-        color = surface,
+        modifier = modifier.fillMaxWidth().height(height),
+        shape = RoundedCornerShape(if (tiny) 13.dp else 19.dp),
+        color = MaterialTheme.colorScheme.surface,
         shadowElevation = if (isDragging) 12.dp else 0.dp,
         border = if (isDropTarget) BorderStroke(2.dp, main) else null
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(if (compact) 11.dp else 14.dp),
+            modifier = Modifier.fillMaxSize().padding(if (tiny) 6.dp else if (dense) 8.dp else 12.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Icon(icon, null, tint = main, modifier = Modifier.size(if (compact) 23.dp else 26.dp))
-                Icon(Icons.Outlined.DragIndicator, "Zum Verschieben lange gedrückt halten",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    modifier = Modifier.size(18.dp))
-            }
+            Icon(icon, null, tint = main, modifier = Modifier.size(
+                if (tiny) 18.dp else if (dense) 20.dp else 25.dp
+            ))
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    label,
-                    color = foreground,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = if (compact) 12.sp else 14.sp,
-                    lineHeight = if (compact) 14.sp else 17.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    label, color = foreground, fontWeight = FontWeight.SemiBold,
+                    fontSize = if (tiny) 9.sp else if (dense) 11.sp else 13.sp,
+                    lineHeight = if (tiny) 11.sp else if (dense) 13.sp else 16.sp,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    detail,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = if (compact) 10.sp else 11.sp,
-                    lineHeight = 13.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                if (!tiny) Text(
+                    detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = if (dense) 9.sp else 11.sp,
+                    lineHeight = if (dense) 11.sp else 13.sp,
+                    maxLines = if (dense) 1 else 2, overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -206,6 +213,7 @@ private fun DashboardTile(
 }
 
 private fun dashboardIcon(widget: String): ImageVector = when (widget) {
+    "Scan" -> Icons.Outlined.DocumentScanner
     "Rechnungen" -> Icons.Outlined.ReceiptLong
     "Garantien" -> Icons.Outlined.VerifiedUser
     "Krankenkasse" -> Icons.Outlined.HealthAndSafety
@@ -253,8 +261,11 @@ fun V3Dashboard(
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
     val latestWidgets = rememberUpdatedState(widgets)
     val latestReorder = rememberUpdatedState(onWidgetsReordered)
+    val latestColumns = rememberUpdatedState(columns)
+    val latestColumnsChange = rememberUpdatedState(onColumnsChange)
 
     fun summary(widget: String): String = when (widget) {
+        "Scan" -> docs.count { it.category == "Scan" }.toString() + " unzugeordnete Scans"
         "Rechnungen" -> "${unpaid.size} offen · ${chf(unpaid.sumOf { amountOf(it.amount) })}"
         "Garantien" -> "$expiring laufen bald ab"
         "Krankenkasse" -> "${insurance.size} offene Belege"
@@ -272,6 +283,7 @@ fun V3Dashboard(
 
     fun open(widget: String) {
         when (widget) {
+            "Scan" -> onBrowse("Scan")
             "Rechnungen" -> onBrowse("Rechnung")
             "Garantien" -> onBrowse("Garantie")
             "Krankenkasse" -> onBrowse("Krankenkasse")
@@ -281,8 +293,22 @@ fun V3Dashboard(
     }
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(columns.coerceIn(2, 3)),
-        modifier = Modifier.fillMaxSize(),
+        columns = GridCells.Fixed(columns.coerceIn(2, 6)),
+        modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+            var accumulatedZoom = 1f
+            detectTransformGestures { _, _, zoom, _ ->
+                accumulatedZoom *= zoom
+                if (accumulatedZoom >= 1.18f) {
+                    val next = (latestColumns.value - 1).coerceAtLeast(2)
+                    if (next != latestColumns.value) latestColumnsChange.value(next)
+                    accumulatedZoom = 1f
+                } else if (accumulatedZoom <= 0.85f) {
+                    val next = (latestColumns.value + 1).coerceAtMost(6)
+                    if (next != latestColumns.value) latestColumnsChange.value(next)
+                    accumulatedZoom = 1f
+                }
+            }
+        },
         state = gridState,
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -368,14 +394,9 @@ fun V3Dashboard(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("Meine Übersicht", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Kachel lange drücken und verschieben",
+                    Text("Mit zwei Fingern zoomen · lange drücken zum Verschieben",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                FilterChip(selected = columns == 2, onClick = { onColumnsChange(2) },
-                    label = { Text("2") })
-                Spacer(Modifier.width(6.dp))
-                FilterChip(selected = columns == 3, onClick = { onColumnsChange(3) },
-                    label = { Text("3") })
             }
         }
         gridItems(widgets, key = { "tile:$it" }) { widget ->
@@ -385,7 +406,7 @@ fun V3Dashboard(
                 label = widget,
                 detail = summary(widget),
                 icon = dashboardIcon(widget),
-                compact = columns == 3,
+                columns = columns,
                 isDragging = dragging,
                 isDropTarget = target,
                 modifier = Modifier
