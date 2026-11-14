@@ -143,7 +143,7 @@ fun guessFromText(text: String): TextGuess {
         Regex("vertrag|vereinbarung|kündigungsfrist").containsMatchIn(lower) -> "Vertrag"
         Regex("rechnung|fällig|zahlung bis|einzahlungsschein|iban|qr-rechnung").containsMatchIn(lower) -> "Rechnung"
         Regex("quittung|kassenbon|kassenbeleg|retourenbon|beleg").containsMatchIn(lower) -> "Quittung"
-        else -> "Sonstiges"
+        else -> "Scan"
     }
     val merchant = text.lineSequence().map { it.trim() }.firstOrNull { it.length in 3..55 && it.any(Char::isLetter) } ?: ""
     val amountPattern = Regex("""(?i)(?:chf|fr[.]?|total|betrag)\s*[:=]?\s*([\d'’]+[.,]\d{2})""")
