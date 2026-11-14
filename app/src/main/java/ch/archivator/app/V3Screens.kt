@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -295,18 +297,27 @@ fun V3Dashboard(
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns.coerceIn(2, 6)),
         modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-            var accumulatedZoom = 1f
-            detectTransformGestures { _, _, zoom, _ ->
-                accumulatedZoom *= zoom
-                if (accumulatedZoom >= 1.18f) {
-                    val next = (latestColumns.value - 1).coerceAtLeast(2)
-                    if (next != latestColumns.value) latestColumnsChange.value(next)
-                    accumulatedZoom = 1f
-                } else if (accumulatedZoom <= 0.85f) {
-                    val next = (latestColumns.value + 1).coerceAtMost(6)
-                    if (next != latestColumns.value) latestColumnsChange.value(next)
-                    accumulatedZoom = 1f
-                }
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                var accumulatedZoom = 1f
+                do {
+                    val event = awaitPointerEvent()
+                    val pressed = event.changes.filter { it.pressed }
+                    // Leave single-finger scrolling and long-press tile dragging untouched.
+                    if (pressed.size >= 2) {
+                        accumulatedZoom *= event.calculateZoom()
+                        if (accumulatedZoom >= 1.18f) {
+                            val next = (latestColumns.value - 1).coerceAtLeast(2)
+                            if (next != latestColumns.value) latestColumnsChange.value(next)
+                            accumulatedZoom = 1f
+                        } else if (accumulatedZoom <= 0.85f) {
+                            val next = (latestColumns.value + 1).coerceAtMost(6)
+                            if (next != latestColumns.value) latestColumnsChange.value(next)
+                            accumulatedZoom = 1f
+                        }
+                        pressed.forEach { it.consume() }
+                    }
+                } while (event.changes.any { it.pressed })
             }
         },
         state = gridState,
