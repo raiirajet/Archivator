@@ -1038,16 +1038,16 @@ private fun SettingsPage(
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
         item {
             Text("Einstellungen", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Privat, sicher und ohne Benutzerkonto", color = muted)
+            Text("Privat, sicher und ohne Benutzerkonto", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.fillMaxWidth().padding(17.dp)) {
                     Text("Mein Archiv", fontWeight = FontWeight.Bold)
-                    Text("$count Dokumente · nur auf diesem Gerät", color = muted, fontSize = 13.sp)
+                    Text("$count Dokumente · nur auf diesem Gerät", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                     Spacer(Modifier.height(7.dp))
                     Text("Die Dateien liegen im privaten App-Speicher. Android schützt ihn durch die Gerätespeicherverschlüsselung.",
-                        color = muted, fontSize = 12.sp)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
         }
@@ -1147,7 +1147,7 @@ private fun SettingsPage(
             }
         }
         item {
-            Text("Archivator v2.5 · Offline-first", fontSize = 12.sp, color = muted)
+            Text("Archivator v2.5.2 · Offline-first", fontSize = 12.sp, color = muted)
             Text("Der ML-Kit-Scanner benötigt Google Play-Dienste; die Texterkennung läuft lokal.",
                 color = muted, fontSize = 12.sp)
         }
