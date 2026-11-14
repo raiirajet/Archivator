@@ -77,7 +77,7 @@ private fun HeroStat(label: String, value: String, icon: ImageVector, modifier: 
 
 @Composable
 private fun BlueTile(label: String, detail: String, icon: ImageVector, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(17.dp), color = Color.White) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.surface) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(44.dp).background(baby2, RoundedCornerShape(13.dp)),
                 contentAlignment = Alignment.Center) { Icon(icon, null, tint = navy2) }
