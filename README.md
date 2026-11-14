@@ -1,9 +1,15 @@
 # Archivator – digitaler Haushaltsmanager (Android)
 
-Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.0-beta1**.
+Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.1-beta2**.
 Alle Kernfunktionen sind offline nutzbar; ein Konto oder eine Firebase-Anbindung ist nicht erforderlich.
 
 ## Neu seit 2.0
+
+### Startseite: neue Kachelübersicht
+- Kategorien als kompakte Kacheln in **zwei oder drei Spalten**; die Spaltenzahl lässt sich direkt auf der Startseite umschalten und bleibt gespeichert.
+- **Langes Drücken und Ziehen** verschiebt Kacheln auf ein sichtbares Zielfeld. Die Reihenfolge wird sofort im Geräteprofil gespeichert; in den Einstellungen gibt es ergänzend Pfeiltasten zur Sortierung.
+- Die hellblaue Karte „Ein Scan. Alles im Griff.“ nutzt nun die vollständige verfügbare Displaybreite. Der Scan-Button ist kontrastreich weiss auf Dunkelblau.
+- Kennzahlen und bisherige Funktionen bleiben erhalten; zuletzt archivierte Dokumente werden weiterhin angezeigt.
 
 ### Navigation und Erscheinungsbild
 - Android-Zurück-Geste/-Taste schliesst **nicht** die App, sondern geht von Vorschau zu Dokument,

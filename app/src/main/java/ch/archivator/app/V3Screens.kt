@@ -2,6 +2,21 @@ package ch.archivator.app
 
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,6 +56,16 @@ object HomeWidgets {
     val default = listOf("Rechnungen", "Garantien", "Krankenkasse", "Familienordner", "Finanzen", "Versicherungen")
     val all = default + listOf("Fahrzeug", "Haushalt", "Steuern", "Abonnements", "Zeitachse", "Letzte Dokumente")
     private const val key = "home_widgets"
+    private const val columnsKey = "home_columns"
+
+    fun columns(ctx: Context): Int =
+        ctx.getSharedPreferences("archivator-dashboard", Context.MODE_PRIVATE)
+            .getInt(columnsKey, 2).coerceIn(2, 3)
+
+    fun saveColumns(ctx: Context, columns: Int) {
+        ctx.getSharedPreferences("archivator-dashboard", Context.MODE_PRIVATE)
+            .edit().putInt(columnsKey, columns.coerceIn(2, 3)).apply()
+    }
 
     fun load(ctx: Context): List<String> {
         val raw = ctx.getSharedPreferences("archivator-dashboard", Context.MODE_PRIVATE).getString(key, null)
@@ -122,85 +147,330 @@ private fun BriefDoc(d: ArchiveDoc, onClick: () -> Unit, description: String = "
 }
 
 @Composable
+private fun DashboardTile(
+    label: String,
+    detail: String,
+    icon: ImageVector,
+    compact: Boolean,
+    isDragging: Boolean,
+    isDropTarget: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val surface = MaterialTheme.colorScheme.surface
+    val foreground = MaterialTheme.colorScheme.onSurface
+    val main = MaterialTheme.colorScheme.primary
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth().height(if (compact) 126.dp else 142.dp),
+        shape = RoundedCornerShape(19.dp),
+        color = surface,
+        shadowElevation = if (isDragging) 12.dp else 0.dp,
+        border = if (isDropTarget) BorderStroke(2.dp, main) else null
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(if (compact) 11.dp else 14.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Icon(icon, null, tint = main, modifier = Modifier.size(if (compact) 23.dp else 26.dp))
+                Icon(Icons.Outlined.DragIndicator, "Zum Verschieben lange gedrückt halten",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    label,
+                    color = foreground,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = if (compact) 12.sp else 14.sp,
+                    lineHeight = if (compact) 14.sp else 17.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = if (compact) 10.sp else 11.sp,
+                    lineHeight = 13.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private fun dashboardIcon(widget: String): ImageVector = when (widget) {
+    "Rechnungen" -> Icons.Outlined.ReceiptLong
+    "Garantien" -> Icons.Outlined.VerifiedUser
+    "Krankenkasse" -> Icons.Outlined.HealthAndSafety
+    "Familienordner" -> Icons.Outlined.Groups
+    "Finanzen" -> Icons.Outlined.AccountBalanceWallet
+    "Versicherungen" -> Icons.Outlined.Security
+    "Fahrzeug" -> Icons.Outlined.DirectionsCar
+    "Haushalt" -> Icons.Outlined.Home
+    "Steuern" -> Icons.Outlined.RequestQuote
+    "Abonnements" -> Icons.Outlined.Autorenew
+    "Zeitachse" -> Icons.Outlined.Timeline
+    "Letzte Dokumente" -> Icons.Outlined.FolderOpen
+    else -> Icons.Outlined.FolderOpen
+}
+
+@Composable
 fun V3Dashboard(
-    docs: List<ArchiveDoc>, widgets: List<String>,
-    onOpen: (ArchiveDoc) -> Unit, onScan: () -> Unit,
-    onBrowse: (String) -> Unit, onSection: (String) -> Unit
+    docs: List<ArchiveDoc>,
+    widgets: List<String>,
+    columns: Int,
+    onColumnsChange: (Int) -> Unit,
+    onWidgetsReordered: (List<String>) -> Unit,
+    onOpen: (ArchiveDoc) -> Unit,
+    onScan: () -> Unit,
+    onBrowse: (String) -> Unit,
+    onSection: (String) -> Unit
 ) {
     val today = LocalDate.now()
-    val unpaid = docs.filter { it.category == "Rechnung" && it.status !in listOf("Bezahlt", "Erledigt") }
-    val ins = docs.filter { it.category == "Krankenkasse" && it.status != "Erledigt" }
+    val unpaid = docs.filter {
+        it.category == "Rechnung" && it.status !in listOf("Bezahlt", "Erledigt")
+    }
+    val insurance = docs.filter {
+        it.category == "Krankenkasse" && it.status !in listOf("Erledigt", "Bezahlt")
+    }
     val expiring = docs.count { doc ->
         val end = dateOf(doc.purchased)?.plusMonths(doc.warrantyMonths.toLong())
-        doc.warrantyMonths > 0 && end != null && !end.isBefore(today) && !end.isAfter(today.plusDays(60))
+        doc.warrantyMonths > 0 && end != null &&
+            !end.isBefore(today) && !end.isAfter(today.plusDays(60))
     }
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-        item {
-            Text("Mein digitaler Haushalt", fontSize = 24.sp,
-                fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-            Text("${docs.size} Dokumente sicher archiviert", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val people = docs.map { it.person }.filter { it.isNotBlank() }.distinct()
+    val gridState = rememberLazyGridState()
+    val haptics = LocalHapticFeedback.current
+    var draggedWidget by remember { mutableStateOf<String?>(null) }
+    var dropTarget by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    val latestWidgets = rememberUpdatedState(widgets)
+    val latestReorder = rememberUpdatedState(onWidgetsReordered)
+
+    fun summary(widget: String): String = when (widget) {
+        "Rechnungen" -> "${unpaid.size} offen · ${chf(unpaid.sumOf { amountOf(it.amount) })}"
+        "Garantien" -> "$expiring laufen bald ab"
+        "Krankenkasse" -> "${insurance.size} offene Belege"
+        "Familienordner" -> "${people.size} Personen"
+        "Finanzen" -> "Ausgaben und Belege"
+        "Versicherungen" -> "Policen und Fristen"
+        "Fahrzeug" -> "Service und Dokumente"
+        "Haushalt" -> "Verträge und Geräte"
+        "Steuern" -> "Belege nach Steuerjahr"
+        "Abonnements" -> "Wiederkehrende Kosten"
+        "Zeitachse" -> "Alle wichtigen Termine"
+        "Letzte Dokumente" -> "${docs.size} archivierte Dokumente"
+        else -> "Bereich öffnen"
+    }
+
+    fun open(widget: String) {
+        when (widget) {
+            "Rechnungen" -> onBrowse("Rechnung")
+            "Garantien" -> onBrowse("Garantie")
+            "Krankenkasse" -> onBrowse("Krankenkasse")
+            "Familienordner", "Letzte Dokumente" -> onBrowse("Alle")
+            else -> onSection(widget)
         }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = babyBlue),
-                shape = RoundedCornerShape(22.dp)) {
-                Column(Modifier.padding(20.dp)) {
-                    Text("Ein Scan. Alles im Griff.", color = blueInk,
-                        fontWeight = FontWeight.Bold, fontSize = 21.sp)
-                    Text("Scannen, automatisch erkennen und prüfen.", color = blueInk, fontSize = 13.sp)
-                    Spacer(Modifier.height(15.dp))
-                    Button(onClick = onScan, colors = ButtonDefaults.buttonColors(containerColor = blueInk)) {
-                        Icon(Icons.Outlined.DocumentScanner, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("Jetzt scannen")
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(columns.coerceIn(2, 3)),
+        modifier = Modifier.fillMaxSize(),
+        state = gridState,
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }, key = "dashboard:title") {
+            Column {
+                Text("Mein digitaler Haushalt", fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Text("${docs.size} Dokumente sicher archiviert",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }, key = "dashboard:scan") {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = babyBlue),
+                shape = RoundedCornerShape(23.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Ein Scan. Alles im Griff.",
+                            color = blueInk, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+                            lineHeight = 24.sp)
+                        Spacer(Modifier.height(5.dp))
+                        Text("Scannen, erkennen und sicher archivieren.",
+                            color = blueInk, fontSize = 12.sp, lineHeight = 17.sp)
+                        Spacer(Modifier.height(14.dp))
+                        Button(
+                            onClick = onScan,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = blueInk, contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 11.dp)
+                        ) {
+                            Icon(Icons.Outlined.DocumentScanner, null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Jetzt scannen", color = Color.White)
+                        }
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Icon(Icons.Outlined.Description, null,
+                        modifier = Modifier.size(58.dp),
+                        tint = blueInk.copy(alpha = 0.18f))
+                }
+            }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }, key = "dashboard:stats") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                listOf(
+                    unpaid.size.toString() to "Offene Rechnungen",
+                    expiring.toString() to "Garantien bald fällig",
+                    insurance.size.toString() to "Kassenbelege offen"
+                ).forEach { (value, label) ->
+                    Card(
+                        modifier = Modifier.weight(1f),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().heightIn(min = 92.dp).padding(12.dp),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(value, fontWeight = FontWeight.Bold, fontSize = 23.sp)
+                            Text(label, fontSize = 11.sp, lineHeight = 13.sp)
+                        }
                     }
                 }
             }
         }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(13.dp)) {
-                        Text(unpaid.size.toString(), fontWeight = FontWeight.Bold, fontSize = 24.sp)
-                        Text("Offene Rechnungen", fontSize = 11.sp)
-                    }
+        item(span = { GridItemSpan(maxLineSpan) }, key = "dashboard:widget-header") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Meine Übersicht", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Kachel lange drücken und verschieben",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(13.dp)) {
-                        Text(expiring.toString(), fontWeight = FontWeight.Bold, fontSize = 24.sp)
-                        Text("Garantien bald fällig", fontSize = 11.sp)
-                    }
-                }
-                Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(13.dp)) {
-                        Text(ins.size.toString(), fontWeight = FontWeight.Bold, fontSize = 24.sp)
-                        Text("Kassenbelege offen", fontSize = 11.sp)
-                    }
-                }
+                FilterChip(selected = columns == 2, onClick = { onColumnsChange(2) },
+                    label = { Text("2") })
+                Spacer(Modifier.width(6.dp))
+                FilterChip(selected = columns == 3, onClick = { onColumnsChange(3) },
+                    label = { Text("3") })
             }
         }
-        if (widgets.isNotEmpty()) item {
-            Text("Meine Übersicht", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        gridItems(widgets, key = { "tile:$it" }) { widget ->
+            val dragging = draggedWidget == widget
+            val target = dropTarget == widget && draggedWidget != widget
+            DashboardTile(
+                label = widget,
+                detail = summary(widget),
+                icon = dashboardIcon(widget),
+                compact = columns == 3,
+                isDragging = dragging,
+                isDropTarget = target,
+                modifier = Modifier
+                    .zIndex(if (dragging) 20f else 0f)
+                    .graphicsLayer {
+                        if (dragging) {
+                            translationX = dragOffset.x
+                            translationY = dragOffset.y
+                            scaleX = 1.04f
+                            scaleY = 1.04f
+                        }
+                    }
+                    .pointerInput(widget, columns) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                draggedWidget = widget
+                                dropTarget = widget
+                                dragOffset = Offset.Zero
+                            },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                if (draggedWidget != widget) return@detectDragGesturesAfterLongPress
+                                dragOffset += amount
+                                val visible = gridState.layoutInfo.visibleItemsInfo
+                                val origin = visible.firstOrNull { it.key == "tile:$widget" }
+                                if (origin != null) {
+                                    val x = origin.offset.x + origin.size.width / 2f + dragOffset.x
+                                    val y = origin.offset.y + origin.size.height / 2f + dragOffset.y
+                                    val hovered = visible.firstOrNull {
+                                        val key = it.key as? String
+                                        key != null && key.startsWith("tile:") &&
+                                            x >= it.offset.x && x <= it.offset.x + it.size.width &&
+                                            y >= it.offset.y && y <= it.offset.y + it.size.height
+                                    }
+                                    dropTarget = (hovered?.key as? String)?.removePrefix("tile:")
+                                        ?: widget
+                                }
+                            },
+                            onDragEnd = {
+                                val from = latestWidgets.value.indexOf(widget)
+                                val to = latestWidgets.value.indexOf(dropTarget)
+                                if (from >= 0 && to >= 0 && from != to) {
+                                    val reordered = latestWidgets.value.toMutableList()
+                                    reordered.add(to, reordered.removeAt(from))
+                                    latestReorder.value(reordered)
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                }
+                                draggedWidget = null
+                                dropTarget = null
+                                dragOffset = Offset.Zero
+                            },
+                            onDragCancel = {
+                                draggedWidget = null
+                                dropTarget = null
+                                dragOffset = Offset.Zero
+                            }
+                        )
+                    },
+                onClick = { if (draggedWidget == null) open(widget) }
+            )
         }
-        items(widgets, key = { it }) { widget ->
-            when (widget) {
-                "Rechnungen" -> AreaCard("Rechnungen", "${unpaid.size} offen · ${chf(unpaid.sumOf { amountOf(it.amount) })}") { onBrowse("Rechnung") }
-                "Garantien" -> AreaCard("Garantien", "$expiring laufen innerhalb von 60 Tagen ab") { onBrowse("Garantie") }
-                "Krankenkasse" -> AreaCard("Krankenkasse", "${ins.size} noch nicht abgeschlossen") { onBrowse("Krankenkasse") }
-                "Familienordner" -> AreaCard("Familienordner", docs.map { it.person }.filter { it.isNotBlank() }.distinct().joinToString(", ").ifBlank { "Personen zuordnen" }) { onBrowse("Alle") }
-                "Letzte Dokumente" -> {
-                    docs.take(4).forEach { doc -> BriefDoc(doc, { onOpen(doc) }, doc.amount) }
-                }
-                else -> AreaCard(widget, "Dokumente und Übersicht öffnen") { onSection(widget) }
-            }
-        }
-        item {
-            OutlinedButton(onClick = { onSection("Archivator fragen") }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.Search, contentDescription = null)
+        item(span = { GridItemSpan(maxLineSpan) }, key = "dashboard:search") {
+            OutlinedButton(
+                onClick = { onSection("Archivator fragen") },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Outlined.Search, null)
                 Spacer(Modifier.width(8.dp))
                 Text("Archivator fragen")
             }
         }
-        item { Spacer(Modifier.height(80.dp)) }
+        if (docs.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "dashboard:recent-title") {
+                Text("Zuletzt archiviert", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            }
+            items(docs.take(3).size, span = { GridItemSpan(maxLineSpan) },
+                key = { i -> "recent:${docs[i].id}" }) { index ->
+                val doc = docs[index]
+                BriefDoc(doc, onClick = { onOpen(doc) }, description = doc.amount)
+            }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }, key = "dashboard:bottom") {
+            Spacer(Modifier.height(72.dp))
+        }
     }
 }
 

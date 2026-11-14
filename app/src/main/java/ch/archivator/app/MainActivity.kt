@@ -78,6 +78,7 @@ class MainActivity : FragmentActivity() {
     private var confirmExit by mutableStateOf(false)
     private var darkAppearance by mutableStateOf(false)
     private var homeWidgets by mutableStateOf<List<String>>(HomeWidgets.default)
+    private var homeColumns by mutableIntStateOf(2)
 
     private var editing by mutableStateOf<String?>(null)
     private var previewDoc by mutableStateOf<String?>(null)
@@ -233,6 +234,7 @@ class MainActivity : FragmentActivity() {
         remindersEnabled = getPreferences(MODE_PRIVATE).getBoolean("reminders", true)
         darkAppearance = getPreferences(MODE_PRIVATE).getBoolean("appearance_dark", false)
         homeWidgets = HomeWidgets.load(this)
+        homeColumns = HomeWidgets.columns(this)
         locked = fingerprintEnabled
         Vault.purgeCache(this)
         refresh()
@@ -536,6 +538,15 @@ class MainActivity : FragmentActivity() {
             Box(Modifier.padding(inner).fillMaxSize()) {
                 when (tab) {
                     0 -> V3Dashboard(docs, widgets = homeWidgets,
+                        columns = homeColumns,
+                        onColumnsChange = {
+                            homeColumns = it
+                            HomeWidgets.saveColumns(this@MainActivity, it)
+                        },
+                        onWidgetsReordered = {
+                            homeWidgets = it
+                            HomeWidgets.save(this@MainActivity, it)
+                        },
                         onOpen = { editing = it.id }, onScan = { scan() },
                         onBrowse = { initialArchiveCategory = it; changeTab(1); initialArchiveCategory = it },
                         onSection = ::openSection)
