@@ -79,6 +79,10 @@ class MainActivity : FragmentActivity() {
     private var darkAppearance by mutableStateOf(false)
     private var homeWidgets by mutableStateOf<List<String>>(HomeWidgets.default)
     private var homeColumns by mutableIntStateOf(2)
+    private var showIntroduction by mutableStateOf(false)
+    private var showAppGuide by mutableStateOf(false)
+    private var externalScannerActive = false
+    private var scannerLaunchedAt = 0L
 
     private var editing by mutableStateOf<String?>(null)
     private var previewDoc by mutableStateOf<String?>(null)
@@ -104,6 +108,8 @@ class MainActivity : FragmentActivity() {
     }
     private fun backOneLevel() {
         when {
+            showIntroduction -> Unit
+            showAppGuide -> showAppGuide = false
             previewDoc != null -> previewDoc = null
             editing != null -> editing = null
             extraPage != null -> {
@@ -121,6 +127,7 @@ class MainActivity : FragmentActivity() {
 
 
     private val scannerResult = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        externalScannerActive = false
         if (result.resultCode == RESULT_OK) {
             val scan = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
             val uri = scan?.pdf?.uri ?: scan?.pages?.firstOrNull()?.imageUri
@@ -235,6 +242,7 @@ class MainActivity : FragmentActivity() {
         darkAppearance = getPreferences(MODE_PRIVATE).getBoolean("appearance_dark", false)
         homeWidgets = HomeWidgets.load(this)
         homeColumns = HomeWidgets.columns(this)
+        showIntroduction = !getPreferences(MODE_PRIVATE).getBoolean("introduction_completed_v1", false)
         locked = fingerprintEnabled
         Vault.purgeCache(this)
         refresh()
@@ -249,7 +257,7 @@ class MainActivity : FragmentActivity() {
         }
         if (remindersEnabled) scheduleDeadlines(this)
         if (AutoBackups.enabled(this)) AutoBackups.schedule(this)
-        window.statusBarColor = AndroidColor.rgb(172, 216, 246)
+        window.statusBarColor = if (darkAppearance) AndroidColor.BLACK else AndroidColor.rgb(172, 216, 246)
         window.navigationBarColor = if (darkAppearance) AndroidColor.BLACK else AndroidColor.WHITE
         WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightNavigationBars = !darkAppearance
@@ -257,11 +265,11 @@ class MainActivity : FragmentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = if (darkAppearance) darkColorScheme(
-                surfaceVariant = Color(0xFF253A51),
-                onSurfaceVariant = Color(0xFFC2D0DF),
-                primary = Color(0xFFACD8F6), onPrimary = Color(0xFF082949),
-                secondary = Color(0xFFA9D6FF), surface = Color(0xFF13243A),
-                background = Color(0xFF091726), onSurface = Color.White
+                surfaceVariant = Color(0xFF1A1A1A),
+                onSurfaceVariant = Color(0xFFC5C5C5),
+                primary = Color(0xFFACD8F6), onPrimary = Color.Black,
+                secondary = Color(0xFFA9D6FF), surface = Color(0xFF0B0B0B),
+                background = Color.Black, onSurface = Color.White
             ) else lightColorScheme(
                 primary = forest, onPrimary = Color.White,
                 secondary = Color(0xFF85C4F5), background = canvas,
@@ -282,7 +290,19 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (fingerprintEnabled && !isChangingConfigurations) locked = true
+        // The scanner opens another Android activity. Returning with its result is
+        // part of the same unlock session, not a deliberate app-background event.
+        if (fingerprintEnabled && !isChangingConfigurations && !externalScannerActive) locked = true
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // An abandoned scanning session must not leave Archivator unlocked forever.
+        if (externalScannerActive &&
+            android.os.SystemClock.elapsedRealtime() - scannerLaunchedAt > 30 * 60 * 1000L) {
+            if (fingerprintEnabled) locked = true
+            externalScannerActive = false
+        }
     }
 
     private fun processIncoming(intent: Intent?) {
@@ -324,7 +344,16 @@ class MainActivity : FragmentActivity() {
             .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
             .build()
         GmsDocumentScanning.getClient(options).getStartScanIntent(this)
-            .addOnSuccessListener { scannerResult.launch(IntentSenderRequest.Builder(it).build()) }
+            .addOnSuccessListener {
+                externalScannerActive = true
+                scannerLaunchedAt = android.os.SystemClock.elapsedRealtime()
+                runCatching {
+                    scannerResult.launch(IntentSenderRequest.Builder(it).build())
+                }.onFailure { error ->
+                    externalScannerActive = false
+                    toast("Scanner konnte nicht geöffnet werden: ${error.message}")
+                }
+            }
             .addOnFailureListener {
                 toast("Scanner nicht verfügbar – Fotoaufnahme wird geöffnet")
                 openCamera()
@@ -421,6 +450,16 @@ class MainActivity : FragmentActivity() {
     @Composable
     private fun AppScreen() {
         BackHandler { backOneLevel() }
+        if (showIntroduction || showAppGuide) {
+            ArchivatorGuide(firstLaunch = showIntroduction, onClose = {
+                if (showIntroduction) {
+                    getPreferences(MODE_PRIVATE).edit()
+                        .putBoolean("introduction_completed_v1", true).apply()
+                    showIntroduction = false
+                } else showAppGuide = false
+            })
+            return
+        }
         var showImport by remember { mutableStateOf(false) }
         if (confirmExit) {
             AlertDialog(onDismissRequest = { confirmExit = false },
@@ -561,6 +600,7 @@ class MainActivity : FragmentActivity() {
                         onSection = ::openSection,
                         dark = darkAppearance,
                         onDark = {
+                            window.statusBarColor = if (it) AndroidColor.BLACK else AndroidColor.rgb(172, 216, 246)
                             window.navigationBarColor = if (it) AndroidColor.BLACK else AndroidColor.WHITE
                             WindowInsetsControllerCompat(window, window.decorView).apply {
                                 isAppearanceLightNavigationBars = !it
@@ -577,7 +617,8 @@ class MainActivity : FragmentActivity() {
                         onWidgets = {
                             homeWidgets = it
                             HomeWidgets.save(this@MainActivity, it)
-                        }
+                        },
+                        onAppGuide = { showAppGuide = true }
                     )                }
                 if (importBusy) {
                     Box(Modifier.fillMaxSize().background(Color(0x66000000)), contentAlignment = Alignment.Center) {
@@ -621,7 +662,7 @@ class MainActivity : FragmentActivity() {
 @Composable
 private fun BrandHeader() {
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.25f
-    val header = if (isDark) Color(0xFF142B44) else Color(0xFFACD8F6)
+    val header = if (isDark) Color.Black else Color(0xFFACD8F6)
     val foreground = if (isDark) Color.White else forest
     Column(Modifier.fillMaxWidth().background(header).windowInsetsPadding(WindowInsets.statusBars)) {
         Row(
@@ -645,7 +686,8 @@ private fun BrandHeader() {
 
 @Composable
 private fun ImportAction(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, detail: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = canvas, shape = RoundedCornerShape(14.dp)) {
+    Surface(onClick = onClick, color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = forest, modifier = Modifier.size(28.dp))
             Spacer(Modifier.width(14.dp))
@@ -988,7 +1030,8 @@ private fun SettingsPage(
     onSection: (String) -> Unit, dark: Boolean, onDark: (Boolean) -> Unit,
     widgets: List<String>, onWidgets: (List<String>) -> Unit,
     autoEnabled: Boolean, autoLast: String,
-    onAutoBackup: (String) -> Unit, onAutoDisable: () -> Unit
+    onAutoBackup: (String) -> Unit, onAutoDisable: () -> Unit,
+    onAppGuide: () -> Unit
 ) {
     var passwordDialog by remember { mutableStateOf<String?>(null) }
     var password by remember { mutableStateOf("") }
@@ -1051,6 +1094,20 @@ private fun SettingsPage(
             }
         }
         item { HomeWidgets.Editor(widgets, onWidgets) }
+        item {
+            OutlinedCard(onClick = onAppGuide, modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.MenuBook, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("App Funktion", fontWeight = FontWeight.SemiBold)
+                        Text("Anleitung, Funktionen und Bedienung",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    }
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null)
+                }
+            }
+        }
         item {
             Text("Datensicherung", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text("AES-256-GCM-verschlüsselt. Passwort sicher aufbewahren – ohne Passwort sind die Daten nicht wiederherstellbar.",
