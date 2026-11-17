@@ -5,7 +5,6 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
 import java.security.KeyStore
-import java.security.SecureRandom
 import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.CipherInputStream
@@ -45,10 +44,13 @@ object Vault {
     fun storeEncrypted(ctx: Context, plain: File): File {
         val file = File(ArchiveEngine.docsDir(ctx), "${UUID.randomUUID()}.avc")
         try {
-            val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+            // Android Keystore requires a provider-generated IV for randomized GCM encryption.
+            // Keep the AV02 header format unchanged for existing documents and versions.
             val c = Cipher.getInstance("AES/GCM/NoPadding").apply {
-                init(Cipher.ENCRYPT_MODE, secret(), GCMParameterSpec(128, iv))
+                init(Cipher.ENCRYPT_MODE, secret())
             }
+            val iv = c.iv ?: error("Android Keystore hat keinen GCM-IV erzeugt")
+            check(iv.size == 12) { "Unerwartete GCM-IV-Länge: ${iv.size}" }
             file.outputStream().use { output ->
                 output.write(magic)
                 output.write(iv)

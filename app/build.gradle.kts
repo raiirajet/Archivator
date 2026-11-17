@@ -26,8 +26,8 @@ android {
         applicationId = "ch.archivator.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "2.5.2-beta3"
+        versionCode = 7
+        versionName = "2.5.3-beta4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -69,4 +69,6 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }

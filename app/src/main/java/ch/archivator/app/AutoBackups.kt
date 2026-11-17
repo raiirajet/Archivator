@@ -13,7 +13,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.security.KeyStore
-import java.security.SecureRandom
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
@@ -46,10 +45,13 @@ object AutoBackups {
     }
 
     private fun encrypt(password: String): String {
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        // Let Android Keystore generate a fresh IV; caller-provided IVs are disallowed.
+        // Preserve the existing Base64(12-byte IV + GCM ciphertext) format.
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
-            init(Cipher.ENCRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
+            init(Cipher.ENCRYPT_MODE, secretKey())
         }
+        val iv = cipher.iv ?: error("Android Keystore hat keinen GCM-IV erzeugt")
+        check(iv.size == 12) { "Unerwartete GCM-IV-Länge: ${iv.size}" }
         return Base64.encodeToString(iv + cipher.doFinal(password.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
     }
 

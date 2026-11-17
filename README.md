@@ -1,6 +1,6 @@
 # Archivator – digitaler Haushaltsmanager (Android)
 
-Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.2-beta3**.
+Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.3-beta4**.
 Alle Kernfunktionen sind offline nutzbar; ein Konto oder eine Firebase-Anbindung ist nicht erforderlich.
 
 ## Neu seit 2.0
@@ -55,6 +55,11 @@ Alle Kernfunktionen sind offline nutzbar; ein Konto oder eine Firebase-Anbindung
 - „Archivator fragen“: lokale heuristische Dokumentfrage-Suche, **kein generatives KI-Modell**.
 
 ### Sicherheit
+- **2.5.3-beta4:** Behebt «Caller-provided IV not permitted» beim Scannen,
+  bei der Migration alter Dokumente und beim Einrichten automatischer Backups.
+  Der Android Keystore erzeugt den eindeutigen GCM-IV selbst; vorhandene
+  AV02-Dateien und verschlüsselte Auto-Backup-Passwortdaten bleiben lesbar.
+  Die bisherigen Schlüssel-Aliase und Formate werden nicht geändert.
 - Dokumentdateien AES-256-GCM-verschlüsselt im privaten App-Speicher mit Android-Keystore-Schlüssel.
 - Geschützte Backups: portable passwortverschlüsselte ARC-Dateien mit PBKDF2 + AES-256-GCM.
 - Automatische tägliche verschlüsselte Backups in einen vom Benutzer gewählten Android-Dokumentordner,
@@ -78,7 +83,7 @@ mit Passwort erzeugten ARC-Backup-Dateien sind zusätzlich verschlüsselt.
 ## APK bauen
 
 Ein Push auf `feature/archivator-v3` startet GitHub Actions.
-Der Workflow führt `gradle :app:testDebugUnitTest :app:assembleDebug` aus.
+Der Workflow führt `gradle :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` aus. Der Android-Instrumentierungstest ist erstellt und kompiliert, seine Ausführung auf einem echten Gerät/Emulator ist weiterhin erforderlich.
 Nach einem erfolgreichen Lauf: **Actions → Android APK → Artifacts → Archivator-Android-APK**.
 
 Debug-APKs sind nicht für die öffentliche Verteilung bestimmt und werden auf
