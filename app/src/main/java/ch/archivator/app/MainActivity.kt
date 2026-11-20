@@ -672,7 +672,7 @@ class MainActivity : FragmentActivity() {
                         if (!searchable) importNotice =
                             "Die Dokumentdaten wurden gespeichert, aber die Volltextsuche konnte nicht aktualisiert werden."
                     } catch (error: Exception) {
-                        importProblems.add(ImportFeedback.error(ImportStage.DATABASE, error))
+                        importProblems.add(ImportFeedback.error(ImportStage.EDIT, error))
                     }
                 },
                 onDelete = { deleteDoc(selected) },
