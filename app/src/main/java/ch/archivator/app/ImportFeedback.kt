@@ -15,7 +15,8 @@ enum class ImportStage(val code: String, val label: String) {
     ENCRYPT("04", "Datei verschlüsseln"),
     DATABASE("05", "Im Archiv speichern"),
     VERIFY("06", "Speicherung überprüfen"),
-    SCANNER("07", "Scanner-Ergebnis übernehmen")
+    SCANNER("07", "Scanner-Ergebnis übernehmen"),
+    EDIT("08", "Änderungen speichern")
 }
 
 sealed class ImportOutcome {
@@ -69,7 +70,8 @@ object ImportFeedback {
             cause is UnsupportedDocumentException ->
                 "Das übergebene Format konnte nicht als PDF oder unterstütztes Bild erkannt werden." to
                     "Versuche, das Dokument als PDF, JPG, PNG oder WebP erneut zu speichern und danach zu importieren."
-            cause is SQLiteFullException || cause.message?.contains("database or disk is full", ignoreCase = true) == true ->
+            cause is SQLiteFullException || cause.message?.contains("database or disk is full", ignoreCase = true) == true ||
+                cause.message?.contains("No space left on device", ignoreCase = true) == true ->
                 "Auf dem Gerät ist möglicherweise nicht genügend Speicherplatz für das Archiv vorhanden." to
                     "Gib Speicherplatz frei und versuche den Import erneut. Vorhandene Dokumente bleiben erhalten."
             cause is SQLiteDatabaseLockedException ->
@@ -93,7 +95,11 @@ object ImportFeedback {
         }
         return ImportProblem(
             stage = stage,
-            heading = "Dokument nicht gespeichert",
+            heading = when (stage) {
+                ImportStage.EDIT -> "Änderungen nicht gespeichert"
+                ImportStage.VERIFY -> "Speicherung nicht bestätigt"
+                else -> "Dokument nicht gespeichert"
+            },
             description = description,
             remedy = remedy,
             diagnosticCode = "$code ($type)"
