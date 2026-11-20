@@ -5,6 +5,10 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.database.sqlite.SQLiteException
+import android.database.sqlite.SQLiteFullException
+import android.database.sqlite.SQLiteDiskIOException
+import android.database.sqlite.SQLiteDatabaseCorruptException
 import java.util.UUID
 
 data class ArchiveDoc(
@@ -144,7 +148,11 @@ class ArchiveDb(context: Context) : SQLiteOpenHelper(context, "archivator.db", n
         }.getOrElse { emptySet() }
     }
 
-    fun put(d: ArchiveDoc) {
+    /**
+     * Saves the actual document independently of optional full-text indexing.
+     * Returns false if the metadata was saved but the search index needs repair.
+     */
+    fun put(d: ArchiveDoc): Boolean {
         val v = ContentValues().apply {
             put("id", d.id); put("title", d.title); put("category", d.category)
             put("person", d.person); put("tags", d.tags); put("ocr", d.ocr)
@@ -162,12 +170,23 @@ class ArchiveDb(context: Context) : SQLiteOpenHelper(context, "archivator.db", n
             put("reimbursedDate", d.reimbursedDate)
         }
         val db = writableDatabase
+        var indexed = true
         db.beginTransaction()
         try {
-            db.insertWithOnConflict("docs", null, v, SQLiteDatabase.CONFLICT_REPLACE)
-            indexDoc(db, d)
+            val row = db.insertWithOnConflict("docs", null, v, SQLiteDatabase.CONFLICT_REPLACE)
+            if (row == -1L) throw SQLiteException("Dokument konnte nicht in docs eingetragen werden")
+            try {
+                indexDoc(db, d)
+            } catch (e: SQLiteException) {
+                // Never lose the original document merely because optional search indexing fails.
+                // Fatal storage/corruption failures still abort the transaction.
+                if (e is SQLiteFullException || e is SQLiteDiskIOException ||
+                    e is SQLiteDatabaseCorruptException) throw e
+                indexed = false
+            }
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
+        return indexed
     }
 
     fun all(): List<ArchiveDoc> {
