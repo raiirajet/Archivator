@@ -21,66 +21,160 @@ import java.util.UUID
 object ArchiveEngine {
     fun docsDir(ctx: Context): File = File(ctx.filesDir, "docs").apply { mkdirs() }
 
-    suspend fun importDocument(ctx: Context, db: ArchiveDb, uri: Uri, suppliedMime: String? = null): Pair<ArchiveDoc?, String?> =
-        withContext(Dispatchers.IO) {
-            val mime = suppliedMime ?: ctx.contentResolver.getType(uri) ?: "application/pdf"
-            val isPdf = mime.contains("pdf") || uri.toString().lowercase(Locale.ROOT).substringBefore("?").endsWith(".pdf")
-            val ext = when {
-                isPdf -> "pdf"
-                mime.contains("png") -> "png"
-                mime.contains("webp") -> "webp"
-                else -> "jpg"
-            }
-            val f = File(ctx.cacheDir, "${UUID.randomUUID()}.$ext")
-            var encrypted: File? = null
-            try {
-                ctx.contentResolver.openInputStream(uri)?.use { input ->
-                    f.outputStream().use { input.copyTo(it) }
-                } ?: throw IllegalStateException("Datei konnte nicht gelesen werden")
-                if (f.length() == 0L) throw IllegalStateException("Leere Datei")
-                if (f.length() > 100L * 1024 * 1024) throw IllegalArgumentException("Datei grösser als 100 MB")
-                val hash = checksum(f)
-                val existing = db.byHash(hash)
-                if (existing != null) {
-                    f.delete()
-                    return@withContext Pair(existing, "Duplikat erkannt – vorhandenes Dokument geöffnet")
+    /**
+     * Always save the original encrypted file first. OCR, QR extraction and classification
+     * are optional enhancements: none may prevent a readable document from being archived.
+     */
+    suspend fun importDocument(
+        ctx: Context,
+        db: ArchiveDb,
+        uri: Uri,
+        suppliedMime: String? = null
+    ): ImportOutcome = withContext(Dispatchers.IO) {
+        val scratch = File(ctx.cacheDir, "archive-import/${UUID.randomUUID()}.bin")
+        var stage = ImportStage.OPEN
+        var encrypted: File? = null
+        var savedToDatabase = false
+        val warnings = mutableListOf<String>()
+        try {
+            scratch.parentFile?.mkdirs()
+            stage = ImportStage.COPY
+            ctx.contentResolver.openInputStream(uri)?.use { input ->
+                scratch.outputStream().use { output ->
+                    val buffer = ByteArray(16 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val length = input.read(buffer)
+                        if (length == -1) break
+                        total += length
+                        if (total > 100L * 1024 * 1024) throw FileTooLargeForArchiveException()
+                        output.write(buffer, 0, length)
+                    }
+                    if (total == 0L) throw EmptyDocumentException()
                 }
-                val text = try { recognize(ctx, f, isPdf) } catch (_: Exception) { "" }
-                val guess = guessFromText(text)
-                val swiss = try { SwissQr.detect(ctx, f, isPdf) } catch (_: Exception) { null }
-                val predictedCategory = if (swiss != null) "Rechnung"
-                    else CategoryMemory.prediction(ctx, guess.merchant) ?: guess.category
-                val matching = similarDocument(db.all(), guess.merchant,
-                    swiss?.amount?.ifBlank { guess.amount } ?: guess.amount,
-                    guessPurchaseDate(text), guessInvoiceNumber(text), text)
-                encrypted = Vault.storeEncrypted(ctx, f)
-                val d = ArchiveDoc(
-                    title = if (swiss != null) "QR-Rechnung · " + swiss.creditor else guess.title,
-                    category = predictedCategory,
-                    merchant = swiss?.creditor?.ifBlank { guess.merchant } ?: guess.merchant,
-                    amount = swiss?.amount?.ifBlank { guess.amount } ?: guess.amount,
-                    due = guess.due,
-                    ocr = text,
+            } ?: throw java.io.FileNotFoundException("Kein Datenstrom für den Scan")
+            stage = ImportStage.FORMAT
+            val mime = detectDocumentMime(scratch, suppliedMime ?: ctx.contentResolver.getType(uri))
+            val isPdf = mime == "application/pdf"
+            val hash = checksum(scratch)
+
+            // A repeat scan of the same receipt should open the existing file instead
+            // of creating duplicates. Repair references to missing encrypted files.
+            val existing = db.byHash(hash)
+            if (existing != null) {
+                val onDisk = File(docsDir(ctx), existing.file)
+                if (onDisk.isFile && onDisk.length() > 32L) {
+                    return@withContext ImportOutcome.Saved(existing, duplicate = true)
+                }
+                warnings += "Ein vorhandener Eintrag hatte keine nutzbare Datei. Die Originaldatei wurde erneut gespeichert."
+            }
+
+            stage = ImportStage.ENCRYPT
+            encrypted = Vault.storeEncrypted(ctx, scratch)
+            check(encrypted.isFile && encrypted.length() > 32L) {
+                "Verschlüsselte Datei konnte nicht geschrieben werden"
+            }
+
+            stage = ImportStage.DATABASE
+            val initial = if (existing != null) {
+                existing.copy(file = encrypted.name, mime = mime, sha256 = hash)
+            } else {
+                ArchiveDoc(
+                    title = "Scan vom " + java.time.LocalDateTime.now()
+                        .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")),
+                    category = "Scan",
                     file = encrypted.name,
-                    mime = if (isPdf) "application/pdf" else when (ext) {
-                        "png" -> "image/png"; "webp" -> "image/webp"; else -> "image/jpeg"
-                    },
-                    sha256 = hash,
+                    mime = mime,
+                    sha256 = hash
+                )
+            }
+            val indexed = db.put(initial)
+            savedToDatabase = true
+            if (!indexed) warnings += "Gespeichert, aber der Suchindex konnte nicht aktualisiert werden."
+
+            stage = ImportStage.VERIFY
+            val verified = db.byId(initial.id)
+            check(verified != null && verified.file == initial.file &&
+                encrypted.isFile && encrypted.length() > 32L) {
+                "Archivierung nicht bestätigt"
+            }
+            // Once committed, no metadata failure may delete the encrypted original.
+            if (existing != null) {
+                return@withContext ImportOutcome.Saved(verified, warnings = warnings)
+            }
+
+            var detectedText = ""
+            try {
+                detectedText = recognize(ctx, scratch, isPdf)
+            } catch (_: Exception) {
+                warnings += "Das Dokument ist gespeichert, die Texterkennung war jedoch nicht verfügbar."
+            }
+
+            try {
+                val guess = guessFromText(detectedText)
+                val swiss = try { SwissQr.detect(ctx, scratch, isPdf) }
+                    catch (_: Exception) { null }
+                val predicted = if (swiss != null) "Rechnung"
+                    else CategoryMemory.prediction(ctx, guess.merchant) ?: guess.category
+                val merchant = swiss?.creditor?.ifBlank { guess.merchant } ?: guess.merchant
+                val amount = swiss?.amount?.ifBlank { guess.amount } ?: guess.amount
+                val matching = similarDocument(
+                    db.all().filterNot { it.id == initial.id },
+                    guess.merchant, amount, guessPurchaseDate(detectedText),
+                    guessInvoiceNumber(detectedText), detectedText
+                )
+                val updated = verified.copy(
+                    title = if (swiss != null) "QR-Rechnung · " + swiss.creditor else
+                        if (guess.category == "Scan" && guess.merchant.isBlank()) verified.title
+                        else guess.title,
+                    category = predicted,
+                    merchant = merchant,
+                    amount = amount,
+                    due = guess.due,
+                    ocr = detectedText,
                     iban = swiss?.iban ?: "",
                     reference = swiss?.reference ?: "",
                     qrPayload = swiss?.payload ?: "",
-                    invoiceNumber = guessInvoiceNumber(text),
-                    purchased = guessPurchaseDate(text)
+                    invoiceNumber = guessInvoiceNumber(detectedText),
+                    purchased = guessPurchaseDate(detectedText)
                 )
-                db.put(d)
-                Pair(d, matching?.let { "Möglicher Doppelbeleg zu: ${it.title}. Bitte prüfen." })
-            } catch (ex: Exception) {
-                encrypted?.delete()
-                Pair(null, ex.localizedMessage ?: "Import fehlgeschlagen")
-            } finally {
-                f.delete()
+                val searchUpdated = db.put(updated)
+                if (!searchUpdated && indexed) {
+                    warnings += "Die Daten wurden gespeichert, aber die Volltextsuche ist vorübergehend eingeschränkt."
+                }
+                if (matching != null) warnings +=
+                    "Möglicher Doppelbeleg zu: ${matching.title}. Bitte prüfen."
+                return@withContext ImportOutcome.Saved(updated, warnings = warnings)
+            } catch (_: Exception) {
+                warnings += "Das Dokument ist gesichert, aber die automatische Auswertung ist fehlgeschlagen. Angaben können manuell ergänzt werden."
+                return@withContext ImportOutcome.Saved(verified, warnings = warnings)
             }
+        } catch (error: Exception) {
+            if (!savedToDatabase) encrypted?.delete()
+            ImportOutcome.Failed(ImportFeedback.error(stage, error))
+        } finally {
+            scratch.delete()
         }
+    }
+
+    /** Examine file bytes, not just MIME declarations (which are often missing for shared photos). */
+    private fun detectDocumentMime(file: File, declared: String?): String {
+        val header = ByteArray(16)
+        val size = file.inputStream().use { it.read(header) }
+        if (size < 4) throw UnsupportedDocumentException()
+        val ascii = String(header, Charsets.ISO_8859_1)
+        return when {
+            ascii.startsWith("%PDF-") -> "application/pdf"
+            (header[0].toInt() and 0xff) == 0xff &&
+                (header[1].toInt() and 0xff) == 0xd8 &&
+                (header[2].toInt() and 0xff) == 0xff -> "image/jpeg"
+            (header[0].toInt() and 0xff) == 0x89 && ascii.substring(1).startsWith("PNG") -> "image/png"
+            ascii.startsWith("RIFF") && ascii.substring(8, 12) == "WEBP" -> "image/webp"
+            ascii.substring(4, 8) == "ftyp" &&
+                listOf("heic", "heix", "mif1", "hevc").any { ascii.substring(8, 12) == it } -> "image/heic"
+            else -> throw UnsupportedDocumentException()
+        }
+    }
 
     fun checksum(f: File): String {
         val md = MessageDigest.getInstance("SHA-256")
