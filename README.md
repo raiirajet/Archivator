@@ -1,7 +1,18 @@
 # Archivator – digitaler Haushaltsmanager (Android)
 
-Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.3-beta4**.
+Native Android-App in Kotlin/Jetpack Compose. Stand dieses Entwicklungszweigs: **2.5.4-beta5**.
 Alle Kernfunktionen sind offline nutzbar; ein Konto oder eine Firebase-Anbindung ist nicht erforderlich.
+
+## Verbesserte Speicherung und Fehlerdiagnose (2.5.4-beta5)
+
+- Dokumente werden zuerst als verschlüsselte Originaldateien in der lokalen Datenbank gesichert. Texterkennung, QR-Auswertung und automatische Kategoriezuordnung laufen anschliessend und dürfen die Aufnahme nicht mehr verwerfen. Falls OCR scheitert, bleibt das Dokument unter «Scan» erhalten.
+- Prüft die echten Datei-Bytes (PDF, JPEG, PNG, WebP, HEIC), nicht unzuverlässige MIME-Angaben externer Apps. Leere und übergrosse Dateien werden klar abgewiesen, ebenso nicht unterstützte Formate.
+- Sichert Dokumenteinträge unabhängig vom optionalen Volltextindex, sodass ein vorübergehender Indexfehler die Originaldatei nicht mehr verwirft. Das Ergebnis wird nach dem Eintrag verifiziert.
+- Beim Smart-Scanner wird bei unlesbarem PDF auf die zurückgegebenen Bildseiten ausgewichen; mehrere Bildseiten werden einzeln archiviert und entsprechend angekündigt.
+- Importiert mehrere Dokumente nacheinander statt gleichzeitig. Zeigt die Anzahl gespeicherter Belege an und unterscheidet zwischen Duplikaten und neuen Dateien.
+- Gut sichtbare Fehlermeldungen mit betroffener Phase, konkretem Lösungsvorschlag und kopierbarem Diagnosecode. Vertrauliche Dateinamen, OCR-Texte und Inhalts-URIs werden nicht in den Fehlercode aufgenommen.
+- Kamera-URI wird während einer externen Aufnahme gespeichert, damit ein Android-Neustart der Aktivität den Rückweg besser übersteht. Beim Speichern bearbeiteter Dokumentdetails werden Datenbankfehler ebenfalls angezeigt.
+- Neue JVM-Tests zur Datei-Erkennung und Fehlerzuordnung; ein erfolgreicher CI-Build ersetzt keine Praxisprüfung auf dem Android-Gerät.
 
 ## Neu seit 2.0
 
