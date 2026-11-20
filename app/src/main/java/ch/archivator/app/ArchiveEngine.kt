@@ -159,7 +159,7 @@ object ArchiveEngine {
     }
 
     /** Examine file bytes, not just MIME declarations (which are often missing for shared photos). */
-    private fun detectDocumentMime(file: File, declared: String?): String {
+    internal fun detectDocumentMime(file: File, declared: String?): String {
         val header = ByteArray(16)
         val size = file.inputStream().use { it.read(header) }
         if (size < 4) throw UnsupportedDocumentException()
