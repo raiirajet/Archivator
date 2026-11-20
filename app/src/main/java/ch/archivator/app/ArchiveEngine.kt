@@ -54,7 +54,7 @@ object ArchiveEngine {
                 }
             } ?: throw java.io.FileNotFoundException("Kein Datenstrom für den Scan")
             stage = ImportStage.FORMAT
-            val mime = detectDocumentMime(scratch, suppliedMime ?: ctx.contentResolver.getType(uri))
+            val mime = detectDocumentMime(scratch, suppliedMime)
             val isPdf = mime == "application/pdf"
             val hash = checksum(scratch)
 
