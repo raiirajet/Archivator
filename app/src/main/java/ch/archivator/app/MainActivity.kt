@@ -2,6 +2,9 @@ package ch.archivator.app
 
 import android.Manifest
 import android.app.DatePickerDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -91,6 +94,9 @@ class MainActivity : FragmentActivity() {
     private var fingerprintEnabled by mutableStateOf(false)
     private var remindersEnabled by mutableStateOf(true)
     private var importBusy by mutableStateOf(false)
+    private var importStatus by mutableStateOf("Dokument wird sicher archiviert …")
+    private val importProblems = mutableStateListOf<ImportProblem>()
+    private var importNotice by mutableStateOf<String?>(null)
     private var cameraUri: Uri? = null
     private var backupPassword: String? = null
     private var restorePassword: String? = null
@@ -129,20 +135,41 @@ class MainActivity : FragmentActivity() {
     private val scannerResult = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         externalScannerActive = false
         if (result.resultCode == RESULT_OK) {
-            val scan = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
-            val uri = scan?.pdf?.uri ?: scan?.pages?.firstOrNull()?.imageUri
-            if (uri == null) toast("Keine Scan-Datei erhalten") else importDocument(uri, if (scan?.pdf != null) "application/pdf" else "image/jpeg")
+            try {
+                val scan = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+                val pages = scan?.pages.orEmpty().map { it.imageUri }
+                val pdfUri = scan?.pdf?.uri
+                when {
+                    pdfUri != null -> importDocuments(
+                        listOf(pdfUri to "application/pdf"),
+                        fallbackPages = pages
+                    )
+                    pages.isNotEmpty() -> importDocuments(pages.map { it to "image/jpeg" })
+                    else -> importProblems.add(ImportFeedback.error(
+                        ImportStage.SCANNER, EmptyDocumentException()
+                    ))
+                }
+            } catch (error: Exception) {
+                importProblems.add(ImportFeedback.error(ImportStage.SCANNER, error))
+            }
         }
     }
 
     private val filePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        uris.take(20).forEach { importDocument(it) }
+        if (uris.isNotEmpty()) importDocuments(uris.take(20).map { it to null })
     }
 
     private val cameraResult = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        val uri = cameraUri
+        val uri = cameraUri ?: getPreferences(MODE_PRIVATE)
+            .getString("pending_camera_uri", null)?.let(Uri::parse)
+        cameraUri = null
+        getPreferences(MODE_PRIVATE).edit().remove("pending_camera_uri").apply()
         if (success && uri != null) importDocument(uri, "image/jpeg")
-        else toast("Fotoaufnahme abgebrochen")
+        else if (success) importProblems.add(ImportFeedback.error(
+            ImportStage.SCANNER,
+            java.io.FileNotFoundException("Kein Kameraergebnis verfügbar")
+        ))
+        else toast("Fotoaufnahme abgebrochen – keine Datei gespeichert")
     }
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -237,6 +264,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         database = ArchiveDb(this)
+        cameraUri = getPreferences(MODE_PRIVATE).getString("pending_camera_uri", null)?.let(Uri::parse)
         fingerprintEnabled = getPreferences(MODE_PRIVATE).getBoolean("biometric", false)
         remindersEnabled = getPreferences(MODE_PRIVATE).getBoolean("reminders", true)
         darkAppearance = getPreferences(MODE_PRIVATE).getBoolean("appearance_dark", false)
@@ -316,7 +344,7 @@ class MainActivity : FragmentActivity() {
             Intent.ACTION_SEND_MULTIPLE -> {
                 @Suppress("DEPRECATION")
                 val uris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-                uris?.take(30)?.forEach { importDocument(it, intent.type) }
+                if (!uris.isNullOrEmpty()) importDocuments(uris.take(30).map { it to intent.type })
             }
             Intent.ACTION_VIEW -> intent.data?.let { importDocument(it, intent.type) }
         }
@@ -325,14 +353,77 @@ class MainActivity : FragmentActivity() {
     private fun refresh() { docs = database.all() }
     private fun toast(message: String) { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
 
-    private fun importDocument(uri: Uri, type: String? = null) {
+    private fun importDocument(uri: Uri, type: String? = null) =
+        importDocuments(listOf(uri to type))
+
+    /** Import a batch sequentially, so a later OCR job cannot hide the result of an earlier one. */
+    private fun importDocuments(
+        inputs: List<Pair<Uri, String?>>,
+        fallbackPages: List<Uri> = emptyList()
+    ) {
+        if (inputs.isEmpty()) return
         lifecycleScope.launch {
             importBusy = true
-            val (doc, warning) = ArchiveEngine.importDocument(this@MainActivity, database, uri, type)
-            importBusy = false
-            refresh()
-            if (warning != null) toast(warning)
-            if (doc != null) editing = doc.id
+            val imported = mutableListOf<ArchiveDoc>()
+            val notes = mutableListOf<String>()
+            val failures = mutableListOf<ImportProblem>()
+            var newCount = 0
+            var duplicates = 0
+            try {
+                var pending = inputs
+                var triedImageFallback = false
+                while (pending.isNotEmpty()) {
+                    var fallbackNow = false
+                    for ((position, entry) in pending.withIndex()) {
+                        importStatus = "Dokument ${position + 1} von ${pending.size} wird gespeichert …"
+                        val result = try {
+                            ArchiveEngine.importDocument(this@MainActivity, database, entry.first, entry.second)
+                        } catch (error: Exception) {
+                            ImportOutcome.Failed(ImportFeedback.error(ImportStage.DATABASE, error))
+                        }
+                        when (result) {
+                            is ImportOutcome.Saved -> {
+                                imported.add(result.document)
+                                if (result.duplicate) duplicates++ else newCount++
+                                notes.addAll(result.warnings)
+                            }
+                            is ImportOutcome.Failed -> {
+                                if (!triedImageFallback && fallbackPages.isNotEmpty() &&
+                                    result.error.stage in listOf(
+                                        ImportStage.OPEN, ImportStage.COPY, ImportStage.FORMAT
+                                    )
+                                ) {
+                                    triedImageFallback = true
+                                    fallbackNow = true
+                                    notes += "Das PDF war nicht lesbar. Die Scan-Seiten wurden stattdessen einzeln als Bilder übernommen."
+                                    break
+                                }
+                                failures.add(result.error)
+                            }
+                        }
+                    }
+                    if (fallbackNow) {
+                        pending = fallbackPages.map { it to "image/jpeg" }
+                    } else break
+                }
+                runCatching { refresh() }.onFailure { error ->
+                    failures.add(ImportFeedback.error(ImportStage.VERIFY, error))
+                }
+                if (imported.size == 1) editing = imported.first().id
+                else if (imported.size > 1) {
+                    initialArchiveCategory = "Alle"
+                    changeTab(1)
+                }
+                when {
+                    newCount > 0 -> toast("$newCount Dokument(e) im Archiv gespeichert")
+                    duplicates > 0 -> toast("Bereits im Archiv vorhanden – keine doppelte Kopie angelegt")
+                }
+                if (notes.isNotEmpty()) importNotice = notes.distinct().joinToString("\n\n")
+                if (failures.isNotEmpty()) importProblems.addAll(failures)
+            } finally {
+                importBusy = false
+                importStatus = "Dokument wird sicher archiviert …"
+            }
         }
     }
 
@@ -361,11 +452,17 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun openCamera() {
-        val file = File(cacheDir, "camera/${System.currentTimeMillis()}.jpg")
-        file.parentFile?.mkdirs()
-        val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
-        cameraUri = uri
-        cameraResult.launch(uri)
+        try {
+            val file = File(cacheDir, "camera/${System.currentTimeMillis()}.jpg")
+            check(file.parentFile?.mkdirs() == true || file.parentFile?.isDirectory == true)
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            cameraUri = uri
+            // Recover the camera URI if Android recreates Archivator while the camera is open.
+            getPreferences(MODE_PRIVATE).edit().putString("pending_camera_uri", uri.toString()).apply()
+            cameraResult.launch(uri)
+        } catch (error: Exception) {
+            importProblems.add(ImportFeedback.error(ImportStage.SCANNER, error))
+        }
     }
 
     private fun openFile(d: ArchiveDoc, share: Boolean) {
@@ -461,6 +558,47 @@ class MainActivity : FragmentActivity() {
             return
         }
         var showImport by remember { mutableStateOf(false) }
+        val problem = importProblems.firstOrNull()
+        if (problem != null) {
+            AlertDialog(
+                onDismissRequest = { importProblems.removeAt(0) },
+                title = { Text(problem.heading) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Fehlgeschlagen bei: ${problem.stage.label}", fontWeight = FontWeight.SemiBold)
+                        Text(problem.description)
+                        Text("Das kannst du tun:", fontWeight = FontWeight.SemiBold)
+                        Text(problem.remedy)
+                        Text("Fehlercode: ${problem.diagnosticCode}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { importProblems.removeAt(0) }) { Text("Verstanden") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(
+                            ClipData.newPlainText("Archivator-Fehler",
+                                "${problem.stage.label}: ${problem.diagnosticCode}")
+                        )
+                        toast("Fehlercode kopiert")
+                    }) { Text("Fehlercode kopieren") }
+                }
+            )
+        } else if (importNotice != null) {
+            val notice = importNotice.orEmpty()
+            AlertDialog(
+                onDismissRequest = { importNotice = null },
+                title = { Text("Dokument übernommen – Hinweis") },
+                text = { Text(notice) },
+                confirmButton = {
+                    TextButton(onClick = { importNotice = null }) { Text("OK") }
+                }
+            )
+        }
         if (confirmExit) {
             AlertDialog(onDismissRequest = { confirmExit = false },
                 title = { Text("Archivator verlassen?") },
@@ -521,7 +659,22 @@ class MainActivity : FragmentActivity() {
                 doc = selected,
                 allDocs = docs,
                 onBack = { editing = null },
-                onSave = { database.put(it); CategoryMemory.remember(this@MainActivity, it); refresh(); editing = null; toast("Dokument gespeichert") },
+                onSave = { updated ->
+                    try {
+                        val searchable = database.put(updated)
+                        check(database.byId(updated.id)?.title == updated.title) {
+                            "Änderung wurde nicht bestätigt"
+                        }
+                        runCatching { CategoryMemory.remember(this@MainActivity, updated) }
+                        refresh()
+                        editing = null
+                        toast("Änderungen gespeichert")
+                        if (!searchable) importNotice =
+                            "Die Dokumentdaten wurden gespeichert, aber die Volltextsuche konnte nicht aktualisiert werden."
+                    } catch (error: Exception) {
+                        importProblems.add(ImportFeedback.error(ImportStage.DATABASE, error))
+                    }
+                },
                 onDelete = { deleteDoc(selected) },
                 onOpen = { openFile(selected, false) },
                 onShare = { openFile(selected, true) },
@@ -625,7 +778,7 @@ class MainActivity : FragmentActivity() {
                         Card { Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(Modifier.size(28.dp))
                             Spacer(Modifier.width(16.dp))
-                            Text("Dokument wird verarbeitet …")
+                            Text(importStatus)
                         } }
                     }
                 }
