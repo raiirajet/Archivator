@@ -70,20 +70,21 @@ object ArchiveEngine {
             }
 
             stage = ImportStage.ENCRYPT
-            encrypted = Vault.storeEncrypted(ctx, scratch)
-            check(encrypted.isFile && encrypted.length() > 32L) {
+            val encryptedFile = Vault.storeEncrypted(ctx, scratch)
+            encrypted = encryptedFile
+            check(encryptedFile.isFile && encryptedFile.length() > 32L) {
                 "Verschlüsselte Datei konnte nicht geschrieben werden"
             }
 
             stage = ImportStage.DATABASE
             val initial = if (existing != null) {
-                existing.copy(file = encrypted.name, mime = mime, sha256 = hash)
+                existing.copy(file = encryptedFile.name, mime = mime, sha256 = hash)
             } else {
                 ArchiveDoc(
                     title = "Scan vom " + java.time.LocalDateTime.now()
                         .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")),
                     category = "Scan",
-                    file = encrypted.name,
+                    file = encryptedFile.name,
                     mime = mime,
                     sha256 = hash
                 )
@@ -95,7 +96,7 @@ object ArchiveEngine {
             stage = ImportStage.VERIFY
             val verified = db.byId(initial.id)
             check(verified != null && verified.file == initial.file &&
-                encrypted.isFile && encrypted.length() > 32L) {
+                encryptedFile.isFile && encryptedFile.length() > 32L) {
                 "Archivierung nicht bestätigt"
             }
             // Once committed, no metadata failure may delete the encrypted original.
