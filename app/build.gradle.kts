@@ -26,8 +26,8 @@ android {
         applicationId = "ch.archivator.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "2.5.3-beta4"
+        versionCode = 8
+        versionName = "2.5.4-beta5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
